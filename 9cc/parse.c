@@ -8,7 +8,7 @@ Node *mul(Token **rest, Token *token);
 Node *unary(Token **rest, Token *token);
 Node *primary(Token **rest, Token *token);
 
-
+Node *code[100];
 
 Node *new_node_num(int val) {
   Node *node = calloc(1, sizeof(Node));
@@ -29,17 +29,24 @@ Node *new_node(NodeKind kind, Node *lhs, Node *rhs) {
 // 次のトークンが期待している記号のときには、トークンを1つ読み進めて
 // 真を返す。それ以外の場合には偽を返す。
 bool consume(char *op, Token *token) {
-  if (token->kind != TK_RESERVED || strlen(op) != token->len ||
+  if (token->kind != TK_PUNCT || strlen(op) != token->len ||
       memcmp(token->str, op, token->len))
     return false;
   *token = *token->next;
   return true;
 }
 
+Token *consume_ident(Token *token) {
+  if (token->kind != TK_IDENT)
+    return false;
+  *token = *token->next;
+  return token;
+}
+
 // 次のトークンが期待している記号のときには、トークンを1つ読み進める。
 // それ以外の場合にはエラーを報告する。
 void expect(char *op, Token *token) {
-  if (token->kind != TK_RESERVED || strlen(op) != token->len || 
+  if (token->kind != TK_PUNCT || strlen(op) != token->len || 
       memcmp(token->str, op, token->len))
     error_at(token->str, "expected \"%s\"", op);
   *token = *token->next;
@@ -59,10 +66,19 @@ bool at_eof(Token *token) {
   return token->kind == TK_EOF;
 }
 
+Node *assign(Token **rest, Token *token) {
+  Node *node = equality(&token, token);
 
-// expr = equality
+  if (consume("=", token))
+    node = new_node(ND_ASSIGN, node, assign(rest, token));
+
+  *rest = token;
+  return node;
+}
+
+// expr = assign
 Node *expr(Token **rest, Token *token) {
-  return equality(rest, token);
+  return assign(rest, token);
 }
 
 // equality = relational ("==" relational | "!=" relational)*
@@ -136,6 +152,16 @@ Node *unary(Token **rest, Token *token) {
 
 // primary = "(" expr ")" | num
 Node *primary(Token **rest, Token *token) {
+  Token *tok = consume_ident(token);
+  if (tok) {
+    Node *node = calloc(1, sizeof(Node));
+    node->kind = ND_LVAR;
+    // ローカル変数のオフセット計算 ('a'なら8, 'b'なら16, ...)
+    node->offset = (tok->str[0] - 'a' + 1) * 8;
+    *rest = token;
+    return node;
+  }
+
   // 次のトークンが"("なら、"(" expr ")"のはず
   if (consume("(", token)) {
     Node *node = expr(rest, token);
@@ -144,12 +170,32 @@ Node *primary(Token **rest, Token *token) {
   }
 
   // そうでなければ数値のはず
-  return new_node_num(expect_number(token));
+  if (token->kind == TK_NUM) {
+    return new_node_num(expect_number(token));
+  }
+
+  error_at(token->str, "expected an expression");
 }
 
-Node *parse(Token *token) {
+Node *stmt(Token *token) {
   Node *node = expr(&token, token);
-  if (token->kind != TK_EOF)
-    error_at(token->str, "式の終わりではありません");
+  expect(";", token);
   return node;
+}
+
+void program(Token **rest, Token *token) {
+  int i = 0;
+  while (!at_eof(token)) {
+    code[i++] = stmt(token);
+  }
+  code[i] = NULL;
+  *rest = token;
+}
+
+Node **parse(Token *token) {
+  for (int i = 0; i < 100; i++) {
+    code[i] = NULL;
+  }
+  program(&token, token);
+  return code;
 }

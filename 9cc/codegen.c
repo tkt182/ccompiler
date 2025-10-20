@@ -1,8 +1,39 @@
 #include "9cc.h"
 
+void codegen_lval(Node *node) {
+  if (node->kind != ND_LVAR)
+    error("代入の左辺値が変数ではありません");
+
+  // 変数のアドレスを計算してそれをスタックにpush
+  // RBPからのオフセットに変数がある
+  printf("  mov rax, rbp\n");
+  printf("  sub rax, %d\n", node->offset);
+  printf("  push rax\n");
+}
+
 void codegen(Node *node) {
-  if (node->kind == ND_NUM) {
+  switch (node->kind){
+  case ND_NUM:
+    // 数値ならそのままスタックにpush
     printf("  push %d\n", node->val);
+    return;
+  case ND_LVAR:
+    // 左辺値としてpushした変数のアドレスをスタックにpush
+    codegen_lval(node);
+    printf("  pop rax\n");
+    printf("  mov rax, [rax]\n");
+    printf("  push rax\n");
+    return;
+  case ND_ASSIGN:
+    // 左辺値としてpushした変数のアドレスをスタックにpush
+    codegen_lval(node->lhs);
+    // 右辺値を計算してスタックにpush
+    codegen(node->rhs);
+
+    printf("  pop rdi\n"); // 右辺の値をRDIに
+    printf("  pop rax\n"); // 左辺のアドレスをRAXに
+    printf("  mov [rax], rdi\n"); // 右辺の値を左辺のアドレスに格納
+    printf("  push rdi\n"); // 式全体の値として右辺の値をpush
     return;
   }
 

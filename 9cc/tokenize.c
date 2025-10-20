@@ -31,6 +31,15 @@ bool startswith(char *p, char *q) {
   return memcmp(p, q, strlen(q)) == 0;
 }
 
+// Read a punctuator token from p and returns its length.
+static int read_punct(char *p) {
+  if (startswith(p, "==") || startswith(p, "!=") ||
+      startswith(p, "<=") || startswith(p, ">="))
+    return 2;
+
+  return ispunct(*p) ? 1 : 0;
+}
+
 // 新しいトークンを作成してcurに繋げる
 Token *new_token(TokenKind kind, Token *cur, char *str, int len) {
   Token *tok = calloc(1, sizeof(Token));
@@ -55,17 +64,10 @@ Token *tokenize(char *p) {
       continue;
     }
 
-    // 複数文字の演算子
-    if (startswith(p, "==") || startswith(p, "!=") ||
-        startswith(p, "<=") || startswith(p, ">=")) {
-      cur = new_token(TK_RESERVED, cur, p, 2);
-      p += 2;
-      continue;
-    }
-
-    // 単数文字の演算子
-    if (strchr("+-*/()<>", *p)) {
-      cur = new_token(TK_RESERVED, cur, p++, 1);
+    // 変数
+    if ('a' <= *p && *p <= 'z') {
+      cur = new_token(TK_IDENT, cur, p++, 1);
+      cur->len = 1;
       continue;
     }
 
@@ -78,7 +80,16 @@ Token *tokenize(char *p) {
       continue;
     }
 
-    error_at(p, "expected a number");
+    // 単数文字の演算子
+    // 複数文字の演算子, 単数文字の演算子, 区切り文字(現状セミコロン)
+    int punct_len = read_punct(p);
+    if (punct_len) {
+      cur = cur->next = new_token(TK_PUNCT, cur, p, punct_len);
+      p += cur->len;
+      continue;
+    }
+
+    error_at(p, "invalid token");
   }
 
   new_token(TK_EOF, cur, p, 0);
