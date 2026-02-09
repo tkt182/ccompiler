@@ -64,10 +64,12 @@ Token *tokenize(char *p) {
       continue;
     }
 
-    // 変数
-    if ('a' <= *p && *p <= 'z') {
-      cur = new_token(TK_IDENT, cur, p++, 1);
-      cur->len = 1;
+    // 変数（複数文字対応）
+    if (isalpha(*p) || *p == '_') {
+      char *start = p;
+      while (isalnum(*p) || *p == '_')
+        p++;
+      cur = new_token(TK_IDENT, cur, start, p - start);
       continue;
     }
 

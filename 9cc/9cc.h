@@ -67,3 +67,12 @@ Node **parse(Token *tok);
 // codegen.c
 //
 void codegen(Node *node);
+
+typedef struct LVar LVar;
+
+struct LVar {
+  LVar *next;    // 次の変数かNULL
+  char *name;    // 変数の名前
+  int len;       // 変数の名前の長さ
+  int offset;    // RBPからのオフセット
+};
