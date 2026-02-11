@@ -40,6 +40,10 @@ static int read_punct(char *p) {
   return ispunct(*p) ? 1 : 0;
 }
 
+int is_alnum(char c) {
+  return isalnum(c) || c == '_';
+}
+
 // 新しいトークンを作成してcurに繋げる
 Token *new_token(TokenKind kind, Token *cur, char *str, int len) {
   Token *tok = calloc(1, sizeof(Token));
@@ -61,6 +65,12 @@ Token *tokenize(char *p) {
     // 空白文字をスキップ
     if (isspace(*p)) {
       p++;
+      continue;
+    }
+
+    if (startswith(p, "return") && !is_alnum(p[6])) {
+      cur = new_token(TK_KEYWORD, cur, p, 6);
+      p += 6;
       continue;
     }
 

@@ -13,6 +13,23 @@ void codegen_lval(Node *node) {
 
 void codegen(Node *node) {
   switch (node->kind){
+  case ND_RETURN:
+    // return文の右辺(返す値)を計算
+    // 結果はスタックのトップに push される
+    codegen(node->lhs);
+    // スタックから計算結果を取り出し、raxレジスタに格納
+    // raxは関数の戻り値を返す専用レジスタ(x86-64の規約)
+    printf("  pop rax\n");
+    // スタックポインタ(rsp)をベースポインタ(rbp)の位置に戻す
+    // ローカル変数領域を一気に解放
+    printf("  mov rsp, rbp\n");
+    // 保存していた呼び出し元のベースポインタを復元
+    // 関数開始時にpush rbpで保存したものを戻す
+    printf("  pop rbp\n");
+    // 呼び出し元にリターン
+    printf("  ret\n");
+    return;
+
   case ND_NUM:
     // 数値ならそのままスタックにpush
     printf("  push %d\n", node->val);

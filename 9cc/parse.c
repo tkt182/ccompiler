@@ -46,6 +46,15 @@ Token *consume_ident(Token **rest, Token *token) {
   return tok;
 }
 
+Token *consume_keyword(Token **rest, char *op, Token *token) {
+  if (token->kind != TK_KEYWORD || strlen(op) != token->len ||
+      memcmp(token->str, op, token->len))
+    return NULL;
+  Token *tok = token;
+  *rest = token->next;
+  return tok;
+}
+
 // 次のトークンが期待している記号のときには、トークンを1つ読み進める。
 // それ以外の場合にはエラーを報告する。
 void expect(Token **rest, char *op, Token *token) {
@@ -213,9 +222,23 @@ Node *primary(Token **rest, Token *token) {
 }
 
 Node *stmt(Token **rest, Token *token) {
-  Node *node = expr(&token, token);
-  expect(&token, ";", token);
-  *rest = token;
+  Node *node;
+
+  // return文の処理
+  Token *tok = consume_keyword(&token, "return", token);
+  if (tok) {
+    node = calloc(1, sizeof(Node));
+    node->kind = ND_RETURN;
+    node->lhs = expr(&token, token);
+    expect(&token, ";", token);
+    *rest = token;
+    return node;
+  } else {
+    node = expr(&token, token);
+    expect(&token, ";", token);
+    *rest = token;
+  }
+
   return node;
 }
 

@@ -15,6 +15,7 @@ typedef enum {
   TK_PUNCT,    // 区切り文字
   TK_NUM,      // 整数トークン
   TK_EOF,      // 入力の終わりを表すトークン
+  TK_KEYWORD,  // キーワード
 } TokenKind;
 
 // トークン型
@@ -48,6 +49,7 @@ typedef enum {
   ND_LT,     // <
   ND_LE,     // <=
   ND_NUM,    // 整数
+  ND_RETURN, // リターン文
 } NodeKind;
 
 
