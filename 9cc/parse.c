@@ -9,7 +9,6 @@ Node *unary(Token **rest, Token *token);
 Node *primary(Token **rest, Token *token);
 LVar *find_lvar(Token *tok);
 
-Node *code[100];
 LVar *locals; // ローカル変数リストの先頭
 
 Node *new_node_num(int val) {
@@ -242,19 +241,19 @@ Node *stmt(Token **rest, Token *token) {
   return node;
 }
 
-void program(Token **rest, Token *token) {
-  int i = 0;
+Node *program(Token **rest, Token *token) {
+  Node head = {};
+  Node *cur = &head;
+
   while (!at_eof(token)) {
-    code[i++] = stmt(&token, token);
+    cur->next = stmt(&token, token);
+    cur = cur->next;
   }
-  code[i] = NULL;
+
   *rest = token;
+  return head.next;
 }
 
-Node **parse(Token *token) {
-  for (int i = 0; i < 100; i++) {
-    code[i] = NULL;
-  }
-  program(&token, token);
-  return code;
+Node *parse(Token *token) {
+  return program(&token, token);
 }

@@ -8,7 +8,7 @@ int main(int argc, char **argv) {
 
   // トークナイズする
   Token *token = tokenize(argv[1]);
-  Node **nodes = parse(token);
+  Node *node = parse(token);
 
   // アセンブリの前半部分を出力
   printf(".intel_syntax noprefix\n");
@@ -22,11 +22,9 @@ int main(int argc, char **argv) {
   printf("  sub rsp, 208\n");
 
   // 抽象構文木を下りながらコード生成
-  // Node *nodeはNode *code[100]です。これを最初からループする処理を行う
-  for (int i = 0; i < 100; i++) {
-    if (nodes[i] == NULL) break;
-
-    codegen(nodes[i]);
+  // 連結リストを辿りながらコード生成
+  for (Node *n = node; n; n = n->next) {
+    codegen(n);
 
     // 最後の文以外は結果をスタックから取り除く
     // 最後の文の結果は戻り値として使用するためRAXに残す
