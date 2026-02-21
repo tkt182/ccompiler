@@ -30,6 +30,7 @@ struct Token {
 
 void error(char *fmt, ...);
 void error_at(char *loc, char *fmt, ...);
+Token *skip(Token *token, char *op);
 Token *tokenize(char *input);
 
 //
@@ -50,6 +51,7 @@ typedef enum {
   ND_LE,     // <=
   ND_NUM,    // 整数
   ND_RETURN, // リターン文
+  ND_BLOCK,  // { ... }
 } NodeKind;
 
 
@@ -60,6 +62,7 @@ struct Node {
   Node *next;   // 次のノード
   Node *lhs;     // 左辺
   Node *rhs;     // 右辺
+  Node *body;    // ブロックの中身
   int val;       // kindがND_NUMの場合のみ使う
   int offset;    // kindがND_LVARの場合のみ使う
 };

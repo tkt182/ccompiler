@@ -13,6 +13,12 @@ void codegen_lval(Node *node) {
 
 void codegen(Node *node) {
   switch (node->kind){
+  case ND_BLOCK:
+    // ブロック内の各文を順番に処理
+    for (Node *n = node->body; n; n = n->next)
+      codegen(n);
+    return;
+
   case ND_RETURN:
     // return文の右辺(返す値)を計算
     // 結果はスタックのトップに push される

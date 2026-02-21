@@ -1,5 +1,6 @@
 #include "9cc.h"
 
+Node *compound_stmt(Token **rest, Token *token);
 Node *expr(Token **rest, Token *token);
 Node *equality(Token **rest, Token *token);
 Node *relational(Token **rest, Token *token);
@@ -10,6 +11,17 @@ Node *primary(Token **rest, Token *token);
 LVar *find_lvar(Token *tok);
 
 LVar *locals; // ローカル変数リストの先頭
+
+
+bool equal(Token *tok, char *op) {
+  return memcmp(tok->str, op, tok->len) == 0 && op[tok->len] == '\0';
+}
+
+Token *skip(Token *token, char *op) {
+  if (!equal(token, op))
+    error_at(token->str, "expected \"%s\"", op);
+  return token->next;
+}
 
 Node *new_node_num(int val) {
   Node *node = calloc(1, sizeof(Node));
@@ -220,8 +232,13 @@ Node *primary(Token **rest, Token *token) {
   error_at(token->str, "expected an expression");
 }
 
+
 Node *stmt(Token **rest, Token *token) {
   Node *node;
+
+  //// ブロックの処理
+  if (equal(token, "{"))
+    return compound_stmt(rest, token);
 
   // return文の処理
   Token *tok = consume_keyword(&token, "return", token);
@@ -238,6 +255,23 @@ Node *stmt(Token **rest, Token *token) {
     *rest = token;
   }
 
+  return node;
+}
+
+Node *compound_stmt(Token **rest, Token *token) {
+  Node head = {};
+  Node *cur = &head;
+
+  expect(&token, "{", token);
+  while (!consume(&token, "}", token)) {
+    cur->next = stmt(&token, token);
+    cur = cur->next;
+  }
+
+  Node *node = new_node(ND_BLOCK, NULL, NULL);
+  node->body = head.next;
+
+  *rest = token;
   return node;
 }
 
