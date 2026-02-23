@@ -1,6 +1,7 @@
 #include "9cc.h"
 
 Node *compound_stmt(Token **rest, Token *token);
+Node *expr_stmt(Token **rest, Token *token);
 Node *expr(Token **rest, Token *token);
 Node *equality(Token **rest, Token *token);
 Node *relational(Token **rest, Token *token);
@@ -30,11 +31,12 @@ Node *new_node_num(int val) {
   return node;
 }
 
-Node *new_node(NodeKind kind, Node *lhs, Node *rhs) {
+Node *new_node(NodeKind kind, Node *lhs, Node *rhs, Node *body) {
   Node *node = calloc(1, sizeof(Node));
   node->kind = kind;
   node->lhs = lhs;
   node->rhs = rhs;
+  node->body = body;
   return node;
 }
 
@@ -51,15 +53,6 @@ bool consume(Token **rest, char *op, Token *token) {
 
 Token *consume_ident(Token **rest, Token *token) {
   if (token->kind != TK_IDENT)
-    return NULL;
-  Token *tok = token;
-  *rest = token->next;
-  return tok;
-}
-
-Token *consume_keyword(Token **rest, char *op, Token *token) {
-  if (token->kind != TK_KEYWORD || strlen(op) != token->len ||
-      memcmp(token->str, op, token->len))
     return NULL;
   Token *tok = token;
   *rest = token->next;
@@ -101,8 +94,15 @@ Node *assign(Token **rest, Token *token) {
   Node *node = equality(&token, token);
 
   if (consume(&token, "=", token))
-    node = new_node(ND_ASSIGN, node, assign(&token, token));
+    node = new_node(ND_ASSIGN, node, assign(&token, token), NULL);
 
+  *rest = token;
+  return node;
+}
+
+Node *expr_stmt(Token **rest, Token *token) {
+  Node *node = expr(&token, token);
+  expect(&token, ";", token);
   *rest = token;
   return node;
 }
@@ -118,9 +118,9 @@ Node *equality(Token **rest, Token *token) {
 
   for (;;) {
     if (consume(&token, "==", token))
-      node = new_node(ND_EQ, node, relational(&token, token));
+      node = new_node(ND_EQ, node, relational(&token, token), NULL);
     else if (consume(&token, "!=", token))
-      node = new_node(ND_NE, node, relational(&token, token));
+      node = new_node(ND_NE, node, relational(&token, token), NULL);
     else {
       *rest = token;
       return node;
@@ -134,13 +134,13 @@ Node *relational(Token **rest, Token *token) {
 
   for (;;) {
     if (consume(&token, "<", token))
-      node = new_node(ND_LT, node, add(&token, token));
+      node = new_node(ND_LT, node, add(&token, token), NULL);
     else if (consume(&token, "<=", token))
-      node = new_node(ND_LE, node, add(&token, token));
+      node = new_node(ND_LE, node, add(&token, token), NULL);
     else if (consume(&token, ">", token))
-      node = new_node(ND_LT, add(&token, token), node);
+      node = new_node(ND_LT, add(&token, token), node, NULL);
     else if (consume(&token, ">=", token))
-      node = new_node(ND_LE, add(&token, token), node);
+      node = new_node(ND_LE, add(&token, token), node, NULL);
     else {
       *rest = token;
       return node;
@@ -154,9 +154,9 @@ Node *add(Token **rest, Token *token) {
 
   for (;;) {
     if (consume(&token, "+", token))
-      node = new_node(ND_ADD, node, mul(&token, token));
+      node = new_node(ND_ADD, node, mul(&token, token), NULL);
     else if (consume(&token, "-", token))
-      node = new_node(ND_SUB, node, mul(&token, token));
+      node = new_node(ND_SUB, node, mul(&token, token), NULL);
     else {
       *rest = token;
       return node;
@@ -170,9 +170,9 @@ Node *mul(Token **rest, Token *token) {
 
   for (;;) {
     if (consume(&token, "*", token))
-      node = new_node(ND_MUL, node, unary(&token, token));
+      node = new_node(ND_MUL, node, unary(&token, token), NULL);
     else if (consume(&token, "/", token))
-      node = new_node(ND_DIV, node, unary(&token, token));
+      node = new_node(ND_DIV, node, unary(&token, token), NULL);
     else {
       *rest = token;
       return node;
@@ -185,7 +185,7 @@ Node *unary(Token **rest, Token *token) {
   if (consume(&token, "+", token))
     return unary(rest, token);
   if (consume(&token, "-", token))
-    return new_node(ND_SUB, new_node_num(0), unary(rest, token));
+    return new_node(ND_SUB, new_node_num(0), unary(rest, token), NULL);
   return primary(rest, token);
 }
 
@@ -232,30 +232,26 @@ Node *primary(Token **rest, Token *token) {
   error_at(token->str, "expected an expression");
 }
 
-
+// stmt = "return" expr ";" | "{" compound-stmt" | expr-stmt
 Node *stmt(Token **rest, Token *token) {
-  Node *node;
-
-  //// ブロックの処理
-  if (equal(token, "{"))
-    return compound_stmt(rest, token);
-
   // return文の処理
-  Token *tok = consume_keyword(&token, "return", token);
-  if (tok) {
-    node = calloc(1, sizeof(Node));
+  if (equal(token, "return")) {
+    token = skip(token, "return");
+    Node *node = calloc(1, sizeof(Node));
     node->kind = ND_RETURN;
     node->lhs = expr(&token, token);
     expect(&token, ";", token);
     *rest = token;
     return node;
-  } else {
-    node = expr(&token, token);
-    expect(&token, ";", token);
-    *rest = token;
   }
 
-  return node;
+  // ブロックの処理
+  if (equal(token, "{")) {
+    return compound_stmt(rest, token);
+  }
+
+  // 式文の処理
+  return expr_stmt(rest, token);
 }
 
 Node *compound_stmt(Token **rest, Token *token) {
@@ -268,12 +264,25 @@ Node *compound_stmt(Token **rest, Token *token) {
     cur = cur->next;
   }
 
-  Node *node = new_node(ND_BLOCK, NULL, NULL);
-  node->body = head.next;
+  Node *node = new_node(ND_BLOCK, NULL, NULL, head.next);
 
   *rest = token;
   return node;
 }
+
+/*
+program    = stmt*
+stmt       = "return" expr ";" | "{" compound-stmt" | expr-stmt
+expr-stmt  = expr ";"
+expr       = assign
+assign     = equality ("=" assign)?
+equality   = relational ("==" relational | "!=" relational)*
+relational = add ("<" add | "<=" add | ">" add | ">=" add)*
+add        = mul ("+" mul | "-" mul)*
+mul        = unary ("*" unary | "/" unary)*
+unary      = ("+" | "-")? primary
+primary    = num | ident | "(" expr ")"
+*/ 
 
 Node *program(Token **rest, Token *token) {
   Node head = {};
