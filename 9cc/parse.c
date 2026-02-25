@@ -101,6 +101,12 @@ Node *assign(Token **rest, Token *token) {
 }
 
 Node *expr_stmt(Token **rest, Token *token) {
+  if (equal(token, ";")) {
+    // ";"だけのときは空文なので、次のトークンを返す
+    *rest = token->next;
+    return new_node(ND_NULL_STMT, NULL, NULL, NULL);
+  }
+
   Node *node = expr(&token, token);
   expect(&token, ";", token);
   *rest = token;
@@ -273,7 +279,7 @@ Node *compound_stmt(Token **rest, Token *token) {
 /*
 program    = stmt*
 stmt       = "return" expr ";" | "{" compound-stmt" | expr-stmt
-expr-stmt  = expr ";"
+expr-stmt  = expr? ";"
 expr       = assign
 assign     = equality ("=" assign)?
 equality   = relational ("==" relational | "!=" relational)*

@@ -49,9 +49,10 @@ typedef enum {
   ND_NE,     // !=
   ND_LT,     // <
   ND_LE,     // <=
-  ND_NUM,    // 整数
-  ND_RETURN, // リターン文
-  ND_BLOCK,  // { ... }
+  ND_NUM,       // 整数
+  ND_RETURN,    // リターン文
+  ND_BLOCK,     // { ... }
+  ND_NULL_STMT, // 空文
 } NodeKind;
 
 

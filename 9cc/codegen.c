@@ -19,6 +19,10 @@ void codegen(Node *node) {
       codegen(n);
     return;
 
+  case ND_NULL_STMT:
+    // 空文は何もしない
+    return;
+
   case ND_RETURN:
     // return文の右辺(返す値)を計算
     // 結果はスタックのトップに push される
