@@ -44,6 +44,17 @@ int is_alnum(char c) {
   return isalnum(c) || c == '_';
 }
 
+bool is_keyword(Token *tok) {
+  char *kw[] = {"return", "if", "else"};
+
+  for (int i = 0; i < sizeof(kw) / sizeof(*kw); i++) {
+    if (startswith(tok->str, kw[i]) && !is_alnum(tok->str[strlen(kw[i])])) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // 新しいトークンを作成してcurに繋げる
 Token *new_token(TokenKind kind, Token *cur, char *str, int len) {
   Token *tok = calloc(1, sizeof(Token));
@@ -68,18 +79,14 @@ Token *tokenize(char *p) {
       continue;
     }
 
-    if (startswith(p, "return") && !is_alnum(p[6])) {
-      cur = new_token(TK_KEYWORD, cur, p, 6);
-      p += 6;
-      continue;
-    }
-
-    // 変数（複数文字対応）
+    // 変数・キーワード（複数文字対応）
     if (isalpha(*p) || *p == '_') {
       char *start = p;
       while (isalnum(*p) || *p == '_')
         p++;
       cur = new_token(TK_IDENT, cur, start, p - start);
+      if (is_keyword(cur))
+        cur->kind = TK_KEYWORD;
       continue;
     }
 

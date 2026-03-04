@@ -1,5 +1,7 @@
 #include "9cc.h"
 
+static int label_count = 0;
+
 void codegen_lval(Node *node) {
   if (node->kind != ND_LVAR)
     error("代入の左辺値が変数ではありません");
@@ -21,6 +23,25 @@ void codegen(Node *node) {
 
   case ND_NULL_STMT:
     // 空文は何もしない
+    return;
+
+  case ND_IF:
+    int c = label_count++;
+    // 条件式を評価してスタックにpush
+    codegen(node->cond);
+    printf("  pop rax\n");
+    printf("  cmp rax, 0\n");
+    if (node->els) {
+      printf("  je .L.else.%d\n", c);
+      codegen(node->then);
+      printf("  jmp .L.end.%d\n", c);
+      printf(".L.else.%d:\n", c);
+      codegen(node->els);
+    } else {
+      printf("  je .L.end.%d\n", c);
+      codegen(node->then);
+    }
+    printf(".L.end.%d:\n", c);
     return;
 
   case ND_RETURN:

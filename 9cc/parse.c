@@ -251,6 +251,23 @@ Node *stmt(Token **rest, Token *token) {
     return node;
   }
 
+  if (equal(token, "if")) {
+    // if文の処理
+    token = skip(token, "if");
+    expect(&token, "(", token);
+    Node *node = calloc(1, sizeof(Node));
+    node->kind = ND_IF;
+    node->cond = expr(&token, token);
+    expect(&token, ")", token);
+    node->then = stmt(&token, token);
+    if (equal(token, "else")) {
+      token = skip(token, "else");
+      node->els = stmt(&token, token);
+    }
+    *rest = token;
+    return node;
+  }
+
   // ブロックの処理
   if (equal(token, "{")) {
     return compound_stmt(rest, token);
@@ -278,7 +295,10 @@ Node *compound_stmt(Token **rest, Token *token) {
 
 /*
 program    = stmt*
-stmt       = "return" expr ";" | "{" compound-stmt" | expr-stmt
+stmt       = "return" expr ";"
+              | "if" "(" expr ")" stmt ("else" stmt)?
+              | "{" compound-stmt"
+              | expr-stmt
 expr-stmt  = expr? ";"
 expr       = assign
 assign     = equality ("=" assign)?

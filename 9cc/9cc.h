@@ -39,18 +39,19 @@ Token *tokenize(char *input);
 
 // 抽象構文木のノードの種類
 typedef enum {
-  ND_ADD,    // +
-  ND_SUB,    // -
-  ND_MUL,    // *
-  ND_DIV,    // /
-  ND_ASSIGN, // =
-  ND_LVAR,   // ローカル変数
-  ND_EQ,     // ==
-  ND_NE,     // !=
-  ND_LT,     // <
-  ND_LE,     // <=
+  ND_ADD,       // +
+  ND_SUB,       // -
+  ND_MUL,       // *
+  ND_DIV,       // /
+  ND_ASSIGN,    // =
+  ND_LVAR,      // ローカル変数
+  ND_EQ,        // ==
+  ND_NE,        // !=
+  ND_LT,        // <
+  ND_LE,        // <=
   ND_NUM,       // 整数
   ND_RETURN,    // リターン文
+  ND_IF,        // if文
   ND_BLOCK,     // { ... }
   ND_NULL_STMT, // 空文
 } NodeKind;
@@ -60,9 +61,12 @@ typedef enum {
 typedef struct Node Node;
 struct Node {
   NodeKind kind; // ノードの型
-  Node *next;   // 次のノード
+  Node *next;    // 次のノード
   Node *lhs;     // 左辺
   Node *rhs;     // 右辺
+  Node *cond;    // if文の条件式
+  Node *then;    // if文の真のときの式
+  Node *els;     // if文の偽のときの式
   Node *body;    // ブロックの中身
   int val;       // kindがND_NUMの場合のみ使う
   int offset;    // kindがND_LVARの場合のみ使う
