@@ -238,7 +238,9 @@ Node *primary(Token **rest, Token *token) {
   error_at(token->str, "expected an expression");
 }
 
-// stmt = "return" expr ";" | "{" compound-stmt" | expr-stmt
+// stmt = "return" expr ";" 
+//      | "if" "(" expr ")" stmt ("else" stmt)?
+//      | "for" "(" expr-stmt expr? ";" expr? ")" stmt
 Node *stmt(Token **rest, Token *token) {
   // return文の処理
   if (equal(token, "return")) {
@@ -264,6 +266,24 @@ Node *stmt(Token **rest, Token *token) {
       token = skip(token, "else");
       node->els = stmt(&token, token);
     }
+    *rest = token;
+    return node;
+  }
+
+  if (equal(token, "for")) {
+    // for文の処理
+    token = skip(token, "for");
+    expect(&token, "(", token);
+    Node *node = calloc(1, sizeof(Node));
+    node->kind = ND_FOR;
+    node->init = expr_stmt(&token, token);
+    if (!equal(token, ";"))
+      node->cond = expr(&token, token);
+    expect(&token, ";", token);
+    if (!equal(token, ")"))
+      node->inc = expr(&token, token);
+    expect(&token, ")", token);
+    node->then = stmt(&token, token);
     *rest = token;
     return node;
   }
@@ -297,6 +317,7 @@ Node *compound_stmt(Token **rest, Token *token) {
 program    = stmt*
 stmt       = "return" expr ";"
               | "if" "(" expr ")" stmt ("else" stmt)?
+              | "for" "(" expr-stmt expr? ";" expr? ")" stmt
               | "{" compound-stmt"
               | expr-stmt
 expr-stmt  = expr? ";"

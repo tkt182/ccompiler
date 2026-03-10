@@ -44,6 +44,24 @@ void codegen(Node *node) {
     printf(".L.end.%d:\n", c);
     return;
 
+  case ND_FOR:
+    c = label_count++;
+    if (node->init)
+      codegen(node->init);
+    printf(".L.begin.%d:\n", c);
+    if (node->cond) {
+      codegen(node->cond);
+      printf("  pop rax\n");
+      printf("  cmp rax, 0\n");
+      printf("  je .L.end.%d\n", c);
+    }
+    codegen(node->then);
+    if (node->inc)
+      codegen(node->inc);
+    printf("  jmp .L.begin.%d\n", c);
+    printf(".L.end.%d:\n", c);
+    return;
+
   case ND_RETURN:
     // return文の右辺(返す値)を計算
     // 結果はスタックのトップに push される

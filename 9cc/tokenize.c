@@ -45,7 +45,7 @@ int is_alnum(char c) {
 }
 
 bool is_keyword(Token *tok) {
-  char *kw[] = {"return", "if", "else"};
+  char *kw[] = {"return", "if", "else", "for"};
 
   for (int i = 0; i < sizeof(kw) / sizeof(*kw); i++) {
     if (startswith(tok->str, kw[i]) && !is_alnum(tok->str[strlen(kw[i])])) {

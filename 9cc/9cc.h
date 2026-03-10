@@ -52,6 +52,7 @@ typedef enum {
   ND_NUM,       // 整数
   ND_RETURN,    // リターン文
   ND_IF,        // if文
+  ND_FOR,       // for文
   ND_BLOCK,     // { ... }
   ND_NULL_STMT, // 空文
 } NodeKind;
@@ -67,6 +68,8 @@ struct Node {
   Node *cond;    // if文の条件式
   Node *then;    // if文の真のときの式
   Node *els;     // if文の偽のときの式
+  Node *init;    // for文の初期化式
+  Node *inc;     // for文の増分
   Node *body;    // ブロックの中身
   int val;       // kindがND_NUMの場合のみ使う
   int offset;    // kindがND_LVARの場合のみ使う
