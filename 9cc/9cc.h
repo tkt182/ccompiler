@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <ctype.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -54,6 +55,7 @@ typedef enum {
   ND_IF,        // if文
   ND_FOR,       // for文 or while文
   ND_BLOCK,     // { ... }
+  ND_FUNCALL,   // 関数呼び出し
   ND_NULL_STMT, // 空文
 } NodeKind;
 
@@ -61,18 +63,19 @@ typedef enum {
 // 抽象構文木のノードの型
 typedef struct Node Node;
 struct Node {
-  NodeKind kind; // ノードの型
-  Node *next;    // 次のノード
-  Node *lhs;     // 左辺
-  Node *rhs;     // 右辺
-  Node *cond;    // if文の条件式
-  Node *then;    // if文の真のときの式
-  Node *els;     // if文の偽のときの式
-  Node *init;    // for文の初期化式
-  Node *inc;     // for文の増分
-  Node *body;    // ブロックの中身
-  int val;       // kindがND_NUMの場合のみ使う
-  int offset;    // kindがND_LVARの場合のみ使う
+  NodeKind kind;  // ノードの型
+  Node *next;     // 次のノード
+  Node *lhs;      // 左辺
+  Node *rhs;      // 右辺
+  Node *cond;     // if文の条件式
+  Node *then;     // if文の真のときの式
+  Node *els;      // if文の偽のときの式
+  Node *init;     // for文の初期化式
+  Node *inc;      // for文の増分
+  Node *body;     // ブロックの中身
+  char *funcname; // 関数呼び出しの関数名
+  int val;        // kindがND_NUMの場合のみ使う
+  int offset;     // kindがND_LVARの場合のみ使う
 };
 
 Node *parse(Token *tok);

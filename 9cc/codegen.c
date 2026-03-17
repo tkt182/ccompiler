@@ -101,6 +101,11 @@ void codegen(Node *node) {
     printf("  mov [rax], rdi\n"); // 右辺の値を左辺のアドレスに格納
     printf("  push rdi\n"); // 式全体の値として右辺の値をpush
     return;
+  case ND_FUNCALL:
+    printf("  mov rax, 0\n");
+    printf("  call %s\n", node->funcname);
+    printf("  push rax\n");
+    return;
   }
 
   codegen(node->lhs);

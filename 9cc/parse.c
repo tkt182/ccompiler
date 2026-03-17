@@ -195,10 +195,23 @@ Node *unary(Token **rest, Token *token) {
   return primary(rest, token);
 }
 
-// primary = "(" expr ")" | num
+// primary = num
+//         | ident ("(" ")")?
+//         | "(" expr ")"
 Node *primary(Token **rest, Token *token) {
   Token *tok = consume_ident(&token, token);
   if (tok) {
+
+    if (consume(&token, "(", token)) {
+      // 関数呼び出しの処理
+      Node *node = calloc(1, sizeof(Node));
+      node->kind = ND_FUNCALL;
+      node->funcname = strndup(tok->str, tok->len);
+      expect(&token, ")", token);
+      *rest = token;
+      return node;
+    }
+
     Node *node = calloc(1, sizeof(Node));
     node->kind = ND_LVAR;
 
@@ -343,8 +356,10 @@ relational = add ("<" add | "<=" add | ">" add | ">=" add)*
 add        = mul ("+" mul | "-" mul)*
 mul        = unary ("*" unary | "/" unary)*
 unary      = ("+" | "-")? primary
-primary    = num | ident | "(" expr ")"
-*/ 
+primary    = num
+              | ident ("(" ")")?
+              | "(" expr ")"
+*/
 
 Node *program(Token **rest, Token *token) {
   Node head = {};
