@@ -241,6 +241,7 @@ Node *primary(Token **rest, Token *token) {
 // stmt = "return" expr ";" 
 //      | "if" "(" expr ")" stmt ("else" stmt)?
 //      | "for" "(" expr-stmt expr? ";" expr? ")" stmt
+//      | "while" "(" expr ")" stmt
 Node *stmt(Token **rest, Token *token) {
   // return文の処理
   if (equal(token, "return")) {
@@ -288,6 +289,19 @@ Node *stmt(Token **rest, Token *token) {
     return node;
   }
 
+  if (equal(token, "while")) {
+    // while文の処理
+    token = skip(token, "while");
+    expect(&token, "(", token);
+    Node *node = calloc(1, sizeof(Node));
+    node->kind = ND_FOR; // for文と同じノードで表現する
+    node->cond = expr(&token, token);
+    expect(&token, ")", token);
+    node->then = stmt(&token, token);
+    *rest = token;
+    return node;
+  }
+
   // ブロックの処理
   if (equal(token, "{")) {
     return compound_stmt(rest, token);
@@ -318,6 +332,7 @@ program    = stmt*
 stmt       = "return" expr ";"
               | "if" "(" expr ")" stmt ("else" stmt)?
               | "for" "(" expr-stmt expr? ";" expr? ")" stmt
+              | "while" "(" expr ")" stmt
               | "{" compound-stmt"
               | expr-stmt
 expr-stmt  = expr? ";"

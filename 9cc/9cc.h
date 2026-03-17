@@ -52,7 +52,7 @@ typedef enum {
   ND_NUM,       // 整数
   ND_RETURN,    // リターン文
   ND_IF,        // if文
-  ND_FOR,       // for文
+  ND_FOR,       // for文 or while文
   ND_BLOCK,     // { ... }
   ND_NULL_STMT, // 空文
 } NodeKind;
