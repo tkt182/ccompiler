@@ -1,6 +1,8 @@
 #include "9cc.h"
 
 static int label_count = 0;
+// 関数呼び出しの引数を格納するレジスタ
+static char *argreg[] = {"%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"};
 
 void codegen_lval(Node *node) {
   if (node->kind != ND_LVAR)
@@ -102,6 +104,15 @@ void codegen(Node *node) {
     printf("  push rdi\n"); // 式全体の値として右辺の値をpush
     return;
   case ND_FUNCALL:
+    int nargs = 0;
+    for (Node *arg = node->args; arg; arg = arg->next) {
+      codegen(arg);
+      nargs++;
+    }
+
+    for(int i = nargs - 1; i >= 0; i--) {
+      printf("  pop %s\n", argreg[i]);
+    }
     printf("  mov rax, 0\n");
     printf("  call %s\n", node->funcname);
     printf("  push rax\n");

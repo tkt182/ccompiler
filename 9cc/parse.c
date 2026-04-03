@@ -195,21 +195,41 @@ Node *unary(Token **rest, Token *token) {
   return primary(rest, token);
 }
 
-// primary = num
-//         | ident ("(" ")")?
-//         | "(" expr ")"
+// funcall = ident "(" (assign ("," assign)*)? ")"
+Node *funcall(Token **rest, Token *token) {
+  Token *start = consume_ident(&token, token);
+  token = skip(token, "(");
+
+  Node head = {};
+  Node *cur = &head;
+
+  while(!equal(token, ")")) {
+    if (cur != &head) {
+      expect(&token, ",", token);
+    }
+    cur->next = assign(&token, token);
+    cur = cur->next;
+  }
+
+  expect(&token, ")", token);
+  *rest = token;
+
+  Node *node = new_node(ND_FUNCALL, NULL, NULL, NULL);
+  node->funcname = strndup(start->str, start->len);
+  node->args = head.next;
+  return node;
+}
+
+// primary = ident
+//            | "(" (assign ("," assign)*)? ")"
+//            | num
 Node *primary(Token **rest, Token *token) {
   Token *tok = consume_ident(&token, token);
   if (tok) {
 
-    if (consume(&token, "(", token)) {
+    if (equal(token, "(")) {
       // 関数呼び出しの処理
-      Node *node = calloc(1, sizeof(Node));
-      node->kind = ND_FUNCALL;
-      node->funcname = strndup(tok->str, tok->len);
-      expect(&token, ")", token);
-      *rest = token;
-      return node;
+      return funcall(rest, tok);
     }
 
     Node *node = calloc(1, sizeof(Node));
@@ -251,7 +271,7 @@ Node *primary(Token **rest, Token *token) {
   error_at(token->str, "expected an expression");
 }
 
-// stmt = "return" expr ";" 
+// stmt = "return" expr ";"
 //      | "if" "(" expr ")" stmt ("else" stmt)?
 //      | "for" "(" expr-stmt expr? ";" expr? ")" stmt
 //      | "while" "(" expr ")" stmt
@@ -356,9 +376,9 @@ relational = add ("<" add | "<=" add | ">" add | ">=" add)*
 add        = mul ("+" mul | "-" mul)*
 mul        = unary ("*" unary | "/" unary)*
 unary      = ("+" | "-")? primary
-primary    = num
-              | ident ("(" ")")?
-              | "(" expr ")"
+primary    = ident
+              | "(" (assign ("," assign)*)? ")"
+              | num
 */
 
 Node *program(Token **rest, Token *token) {

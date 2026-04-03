@@ -74,6 +74,7 @@ struct Node {
   Node *inc;      // for文の増分
   Node *body;     // ブロックの中身
   char *funcname; // 関数呼び出しの関数名
+  Node *args;     // 関数呼び出しの引数
   int val;        // kindがND_NUMの場合のみ使う
   int offset;     // kindがND_LVARの場合のみ使う
 };
