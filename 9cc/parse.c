@@ -3,76 +3,54 @@
 Node *compound_stmt(Token **rest, Token *token);
 Node *expr_stmt(Token **rest, Token *token);
 Node *expr(Token **rest, Token *token);
+Node *assign(Token **rest, Token *token);
 Node *equality(Token **rest, Token *token);
 Node *relational(Token **rest, Token *token);
 Node *add(Token **rest, Token *token);
 Node *mul(Token **rest, Token *token);
 Node *unary(Token **rest, Token *token);
 Node *primary(Token **rest, Token *token);
-LVar *find_lvar(Token *tok);
 
-LVar *locals; // ローカル変数リストの先頭
+Obj *locals; // ローカル変数リストの先頭
 
-
-bool equal(Token *tok, char *op) {
-  return memcmp(tok->str, op, tok->len) == 0 && op[tok->len] == '\0';
+bool equal(Token *token, char *op) {
+  return memcmp(token->loc, op, token->len) == 0 && op[token->len] == '\0';
 }
 
 Token *skip(Token *token, char *op) {
-  if (!equal(token, op))
-    error_at(token->str, "expected \"%s\"", op);
+  if (!equal(token, op)) {
+    error_at(token->loc, "expected \"%s\"", op);
+  }
   return token->next;
-}
-
-Node *new_node_num(int val) {
-  Node *node = calloc(1, sizeof(Node));
-  node->kind = ND_NUM;
-  node->val = val;
-  return node;
-}
-
-Node *new_node(NodeKind kind, Node *lhs, Node *rhs, Node *body) {
-  Node *node = calloc(1, sizeof(Node));
-  node->kind = kind;
-  node->lhs = lhs;
-  node->rhs = rhs;
-  node->body = body;
-  return node;
 }
 
 // 次のトークンが期待している記号のときには、トークンを1つ読み進めて
 // 真を返す。それ以外の場合には偽を返す。
 bool consume(Token **rest, char *op, Token *token) {
   if (token->kind != TK_PUNCT || strlen(op) != token->len ||
-      memcmp(token->str, op, token->len))
+      memcmp(token->loc, op, token->len)) {
     return false;
+  }
   *rest = token->next;
   return true;
-}
-
-
-Token *consume_ident(Token **rest, Token *token) {
-  if (token->kind != TK_IDENT)
-    return NULL;
-  Token *tok = token;
-  *rest = token->next;
-  return tok;
 }
 
 // 次のトークンが期待している記号のときには、トークンを1つ読み進める。
 // それ以外の場合にはエラーを報告する。
 void expect(Token **rest, char *op, Token *token) {
   if (token->kind != TK_PUNCT || strlen(op) != token->len || 
-      memcmp(token->str, op, token->len))
-    error_at(token->str, "expected \"%s\"", op);
+      memcmp(token->loc, op, token->len)) {
+    error_at(token->loc, "expected \"%s\"", op);
+  }
   *rest = token->next;
 }
 
 // 次のトークンが数値の場合、トークンを1つ読み進めてその数値を返す。
 // それ以外の場合にはエラーを報告する。
 int expect_number(Token **rest, Token *token) {
-  if (token->kind != TK_NUM)
-    error_at(token->str, "expected a number");
+  if (token->kind != TK_NUM) {
+    error_at(token->loc, "expected a number");
+  }
   int val = token->val;
   *rest = token->next;
   return val;
@@ -82,19 +60,118 @@ bool at_eof(Token *token) {
   return token->kind == TK_EOF;
 }
 
-LVar *find_lvar(Token *tok) {
-  for (LVar *var = locals; var; var = var->next) {
-    if (var->len == tok->len && !memcmp(var->name, tok->str, tok->len))
+Node *new_node(NodeKind kind, Token *token) {
+  Node *node = calloc(1, sizeof(Node));
+  node->kind = kind;
+  node->tok = token;
+  return node;
+}
+
+Node *new_binary(NodeKind kind, Node *lhs, Node *rhs, Token *token) {
+  Node *node = new_node(kind, token);
+  node->lhs = lhs;
+  node->rhs = rhs;
+  return node;
+}
+
+Node *new_unary(NodeKind kind, Node *expr, Token *token) {
+  Node *node = new_node(kind, token);
+  node->lhs = expr;
+  return node;
+}
+
+Node *new_num(int val, Token *token) {
+  Node *node = new_node(ND_NUM, token);
+  node->val = val;
+  return node;
+}
+
+Node *new_var_node(Obj *var, Token *token) {
+  Node *node = new_node(ND_VAR, token);
+  node->var = var;
+  return node;
+}
+
+char *get_ident(Token *token) {
+  if (token->kind != TK_IDENT) {
+    error_tok(token, "expected an identifier");
+  }
+  return strndup(token->loc, token->len);
+}
+
+Obj *new_lvar(char *name, Type *ty) {
+  Obj *var = calloc(1, sizeof(Obj));
+  var->name = name;
+  var->ty = ty;
+  var->offset = locals ? locals->offset + 8 : 8;
+  var->next = locals;
+  locals = var;
+  return var;
+}
+
+Token *consume_ident(Token **rest, Token *token) {
+  if (token->kind != TK_IDENT) {
+    return NULL;
+  }
+  Token *tok = token;
+  *rest = token->next;
+  return tok;
+}
+
+Obj *find_var(Token *token) {
+  for (Obj *var = locals; var; var = var->next) {
+    if (strlen(var->name) == token->len && !strncmp(token->loc, var->name, token->len)) {
       return var;
+    }
   }
   return NULL;
 }
 
+// declspec = "int"
+Type *declspec(Token **rest, Token *token) {
+  *rest = skip(token, "int");
+  return ty_int;
+}
+
+// type-suffix = ("(" func-params)?
+Type *type_suffix(Token **rest, Token *token, Type *ty) {
+  if (equal(token, "(")) {
+    *rest = skip(token->next, ")");
+    return func_type(ty);
+  }
+  *rest = token;
+  return ty;
+}
+
+// declarator = "*"* ident type-suffix
+Type *declarator(Token **rest, Token *token, Type *ty) {
+  if (consume(rest, "(", token)) {
+    ty = pointer_to(ty);
+    expect(rest, ")", *rest);
+    return ty;
+  }
+
+  if (token->kind != TK_IDENT) {
+    error_tok(token, "expected a variable name");
+  }
+  ty = type_suffix(rest, token->next, ty);
+  ty->name = token;
+  return ty;
+}
+
 Node *assign(Token **rest, Token *token) {
+  // 識別子の直後に "=" が続く場合、未登録なら変数を作る
+  if (token->kind == TK_IDENT && equal(token->next, "=")) {
+    if (!find_var(token)) {
+      new_lvar(strndup(token->loc, token->len), ty_int);
+    }
+  }
+
   Node *node = equality(&token, token);
 
-  if (consume(&token, "=", token))
-    node = new_node(ND_ASSIGN, node, assign(&token, token), NULL);
+  if (consume(&token, "=", token)) {
+    node = new_binary(ND_ASSIGN, node, assign(&token, token), token);
+  }
 
   *rest = token;
   return node;
@@ -104,12 +181,12 @@ Node *expr_stmt(Token **rest, Token *token) {
   if (equal(token, ";")) {
     // ";"だけのときは空文なので、次のトークンを返す
     *rest = token->next;
-    return new_node(ND_NULL_STMT, NULL, NULL, NULL);
+    return new_node(ND_BLOCK, token);
   }
 
-  Node *node = expr(&token, token);
-  expect(&token, ";", token);
-  *rest = token;
+  Node *node = new_node(ND_EXPR_STMT, token);
+  node->lhs = expr(&token, token);
+  *rest = skip(token, ";");
   return node;
 }
 
@@ -123,11 +200,11 @@ Node *equality(Token **rest, Token *token) {
   Node *node = relational(&token, token);
 
   for (;;) {
-    if (consume(&token, "==", token))
-      node = new_node(ND_EQ, node, relational(&token, token), NULL);
-    else if (consume(&token, "!=", token))
-      node = new_node(ND_NE, node, relational(&token, token), NULL);
-    else {
+    if (consume(&token, "==", token)) {
+      node = new_binary(ND_EQ, node, relational(&token, token), NULL);
+    } else if (consume(&token, "!=", token)) {
+      node = new_binary(ND_NE, node, relational(&token, token), NULL);
+    } else {
       *rest = token;
       return node;
     }
@@ -139,19 +216,72 @@ Node *relational(Token **rest, Token *token) {
   Node *node = add(&token, token);
 
   for (;;) {
-    if (consume(&token, "<", token))
-      node = new_node(ND_LT, node, add(&token, token), NULL);
-    else if (consume(&token, "<=", token))
-      node = new_node(ND_LE, node, add(&token, token), NULL);
-    else if (consume(&token, ">", token))
-      node = new_node(ND_LT, add(&token, token), node, NULL);
-    else if (consume(&token, ">=", token))
-      node = new_node(ND_LE, add(&token, token), node, NULL);
-    else {
+    if (consume(&token, "<", token)) {
+      node = new_binary(ND_LT, node, add(&token, token), NULL);
+    } else if (consume(&token, "<=", token)) {
+      node = new_binary(ND_LE, node, add(&token, token), NULL);
+    } else if (consume(&token, ">", token)) {
+      node = new_binary(ND_LT, add(&token, token), node, NULL);
+    } else if (consume(&token, ">=", token)) {
+      node = new_binary(ND_LE, add(&token, token), node, NULL);
+    } else {
       *rest = token;
       return node;
     }
   }
+}
+
+Node *new_add(Node *lhs, Node *rhs, Token *token) {
+  add_type(lhs);
+  add_type(rhs);
+
+  // num + num
+  if (is_integer(lhs->ty) && is_integer(rhs->ty)) {
+    return new_binary(ND_ADD, lhs, rhs, token);
+  }
+
+  if (lhs->ty->base && rhs->ty->base) {
+    error_tok(token, "invalid operands");
+  }
+
+  // Canonicalize `num + ptr` to `ptr + num`.
+  if (!lhs->ty->base && rhs->ty->base) {
+    Node *tmp = lhs;
+    lhs = rhs;
+    rhs = tmp;
+  }
+
+  // ptr + num
+  rhs = new_binary(ND_MUL, rhs, new_num(8, token), token);
+  return new_binary(ND_ADD, lhs, rhs, token);
+}
+
+Node *new_sub(Node *lhs, Node *rhs, Token *token) {
+  add_type(lhs);
+  add_type(rhs);
+
+  // num - num
+  if (is_integer(lhs->ty) && is_integer(rhs->ty)) {
+    return new_binary(ND_SUB, lhs, rhs, token);
+  }
+
+  // ptr - num
+  if (lhs->ty->base && is_integer(rhs->ty)) {
+    rhs = new_binary(ND_MUL, rhs, new_num(8, token), token);
+    add_type(rhs);
+    Node *node = new_binary(ND_SUB, lhs, rhs, token);
+    node->ty = lhs->ty;
+    return node;
+  }
+
+  // ptr - ptr, which returns how many elements are between the two.
+  if (lhs->ty->base && rhs->ty->base) {
+    Node *node = new_binary(ND_SUB, lhs, rhs, token);
+    node->ty = ty_int;
+    return new_binary(ND_DIV, node, new_num(8, token), token);
+  }
+
+  error_tok(token, "invalid operands");
 }
 
 // add = mul ("+" mul | "-" mul)*
@@ -159,11 +289,13 @@ Node *add(Token **rest, Token *token) {
   Node *node = mul(&token, token);
 
   for (;;) {
-    if (consume(&token, "+", token))
-      node = new_node(ND_ADD, node, mul(&token, token), NULL);
-    else if (consume(&token, "-", token))
-      node = new_node(ND_SUB, node, mul(&token, token), NULL);
-    else {
+    Token *start = token;
+    
+    if (consume(&token, "+", token)) {
+      node = new_add(node, mul(&token, token), start);
+    } else if (consume(&token, "-", token)) {
+      node = new_sub(node, mul(&token, token), start);
+    } else {
       *rest = token;
       return node;
     }
@@ -175,11 +307,13 @@ Node *mul(Token **rest, Token *token) {
   Node *node = unary(&token, token);
 
   for (;;) {
-    if (consume(&token, "*", token))
-      node = new_node(ND_MUL, node, unary(&token, token), NULL);
-    else if (consume(&token, "/", token))
-      node = new_node(ND_DIV, node, unary(&token, token), NULL);
-    else {
+    Token *start = token;
+
+    if (consume(&token, "*", token)) {
+      node = new_binary(ND_MUL, node, unary(&token, token), start);
+    } else if (consume(&token, "/", token)) {
+      node = new_binary(ND_DIV, node, unary(&token, token), start);
+    } else {
       *rest = token;
       return node;
     }
@@ -188,10 +322,12 @@ Node *mul(Token **rest, Token *token) {
 
 // unary = ("+" | "-")? unary | primary
 Node *unary(Token **rest, Token *token) {
-  if (consume(&token, "+", token))
+  if (consume(&token, "+", token)) {
     return unary(rest, token);
-  if (consume(&token, "-", token))
-    return new_node(ND_SUB, new_node_num(0), unary(rest, token), NULL);
+  }
+  if (consume(&token, "-", token)) {
+    return new_unary(ND_NEG, unary(rest, token), token);
+  }
   return primary(rest, token);
 }
 
@@ -214,8 +350,8 @@ Node *funcall(Token **rest, Token *token) {
   expect(&token, ")", token);
   *rest = token;
 
-  Node *node = new_node(ND_FUNCALL, NULL, NULL, NULL);
-  node->funcname = strndup(start->str, start->len);
+  Node *node = new_node(ND_FUNCALL, start);
+  node->funcname = strndup(start->loc, start->len);
   node->args = head.next;
   return node;
 }
@@ -232,26 +368,12 @@ Node *primary(Token **rest, Token *token) {
       return funcall(rest, tok);
     }
 
-    Node *node = calloc(1, sizeof(Node));
-    node->kind = ND_LVAR;
-
-    LVar *lvar = find_lvar(tok);
-    if (lvar) {
-      // すでに登録されている変数の場合
-      node->offset = lvar->offset;
-    } else {
-      // 新しい変数の場合はLVarを作って連結リストに追加
-      lvar = calloc(1, sizeof(LVar));
-      lvar->next = locals;
-      lvar->name = tok->str;
-      lvar->len = tok->len;
-      lvar->offset = (locals ? locals->offset : 0) + 8;
-      node->offset = lvar->offset;
-      locals = lvar;
+    Obj *var = find_var(tok);
+    if (!var) {
+      error_tok(tok, "undefined variable");
     }
-
     *rest = token;
-    return node;
+    return new_var_node(var, tok);
   }
 
   // 次のトークンが"("なら、"(" expr ")"のはず
@@ -264,11 +386,11 @@ Node *primary(Token **rest, Token *token) {
 
   // そうでなければ数値のはず
   if (token->kind == TK_NUM) {
-    *rest = token;
-    return new_node_num(expect_number(rest, token));
+    Token *tok = token;
+    return new_num(expect_number(rest, token), tok);
   }
 
-  error_at(token->str, "expected an expression");
+  error_at(token->loc, "expected an expression");
 }
 
 // stmt = "return" expr ";"
@@ -278,44 +400,38 @@ Node *primary(Token **rest, Token *token) {
 Node *stmt(Token **rest, Token *token) {
   // return文の処理
   if (equal(token, "return")) {
-    token = skip(token, "return");
-    Node *node = calloc(1, sizeof(Node));
-    node->kind = ND_RETURN;
-    node->lhs = expr(&token, token);
+    Node *node = new_node(ND_RETURN, token);
+    node->lhs = expr(&token, token->next);
     expect(&token, ";", token);
     *rest = token;
     return node;
   }
 
   if (equal(token, "if")) {
-    // if文の処理
+    Node *node = new_node(ND_IF, token);
     token = skip(token, "if");
     expect(&token, "(", token);
-    Node *node = calloc(1, sizeof(Node));
-    node->kind = ND_IF;
     node->cond = expr(&token, token);
     expect(&token, ")", token);
     node->then = stmt(&token, token);
-    if (equal(token, "else")) {
-      token = skip(token, "else");
-      node->els = stmt(&token, token);
-    }
+    if (equal(token, "else"))
+      node->els = stmt(&token, token->next);
     *rest = token;
     return node;
   }
 
   if (equal(token, "for")) {
-    // for文の処理
     token = skip(token, "for");
     expect(&token, "(", token);
-    Node *node = calloc(1, sizeof(Node));
-    node->kind = ND_FOR;
+    Node *node = new_node(ND_FOR, token);
     node->init = expr_stmt(&token, token);
-    if (!equal(token, ";"))
+    if (!equal(token, ";")) {
       node->cond = expr(&token, token);
+    }
     expect(&token, ";", token);
-    if (!equal(token, ")"))
+    if (!equal(token, ")")) {
       node->inc = expr(&token, token);
+    }
     expect(&token, ")", token);
     node->then = stmt(&token, token);
     *rest = token;
@@ -326,8 +442,7 @@ Node *stmt(Token **rest, Token *token) {
     // while文の処理
     token = skip(token, "while");
     expect(&token, "(", token);
-    Node *node = calloc(1, sizeof(Node));
-    node->kind = ND_FOR; // for文と同じノードで表現する
+    Node *node = new_node(ND_FOR, token); // for文と同じノードで表現する
     node->cond = expr(&token, token);
     expect(&token, ")", token);
     node->then = stmt(&token, token);
@@ -337,7 +452,7 @@ Node *stmt(Token **rest, Token *token) {
 
   // ブロックの処理
   if (equal(token, "{")) {
-    return compound_stmt(rest, token);
+    return compound_stmt(rest, token->next);
   }
 
   // 式文の処理
@@ -345,23 +460,34 @@ Node *stmt(Token **rest, Token *token) {
 }
 
 Node *compound_stmt(Token **rest, Token *token) {
+  Node *node = new_node(ND_BLOCK, token);
+
   Node head = {};
   Node *cur = &head;
 
-  expect(&token, "{", token);
   while (!consume(&token, "}", token)) {
     cur->next = stmt(&token, token);
     cur = cur->next;
   }
 
-  Node *node = new_node(ND_BLOCK, NULL, NULL, head.next);
-
+  node->body = head.next;
   *rest = token;
   return node;
 }
 
+Function *function(Token **rest, Token *token) {
+  Type *ty = declspec(&token, token);
+  ty = declarator(&token, token, ty);
+
+  Function *fn = calloc(1, sizeof(Function));
+  fn->name = get_ident(ty->name);
+  token = skip(token, "{");
+
+  fn->body = compound_stmt(rest, token);
+  return fn;
+}
+
 /*
-program    = stmt*
 stmt       = "return" expr ";"
               | "if" "(" expr ")" stmt ("else" stmt)?
               | "for" "(" expr-stmt expr? ";" expr? ")" stmt
@@ -381,19 +507,14 @@ primary    = ident
               | num
 */
 
-Node *program(Token **rest, Token *token) {
-  Node head = {};
-  Node *cur = &head;
+Function *parse(Token *token) {
+  Function head = {};
+  Function *cur = &head;
 
   while (!at_eof(token)) {
-    cur->next = stmt(&token, token);
+    cur->next = function(&token, token);
     cur = cur->next;
   }
 
-  *rest = token;
   return head.next;
-}
-
-Node *parse(Token *token) {
-  return program(&token, token);
 }

@@ -3,127 +3,70 @@
 static int label_count = 0;
 // 関数呼び出しの引数を格納するレジスタ
 static char *argreg[] = {"%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"};
+Function *current_fn;
 
-void codegen_lval(Node *node) {
-  if (node->kind != ND_LVAR)
-    error("代入の左辺値が変数ではありません");
-
-  // 変数のアドレスを計算してそれをスタックにpush
-  // RBPからのオフセットに変数がある
-  printf("  mov rax, rbp\n");
-  printf("  sub rax, %d\n", node->offset);
+void push(void) {
   printf("  push rax\n");
+  label_count++;
 }
 
-void codegen(Node *node) {
-  switch (node->kind){
-  case ND_BLOCK:
-    // ブロック内の各文を順番に処理
-    for (Node *n = node->body; n; n = n->next)
-      codegen(n);
-    return;
+void pop(char *arg) {
+  printf("  pop %s\n", arg);
+  label_count--;
+}
 
-  case ND_NULL_STMT:
-    // 空文は何もしない
-    return;
+void codegen_lval(Node *node) {
+  if (node->kind != ND_VAR)
+    error("代入の左辺値が変数ではありません");
 
-  case ND_IF:
-    int c = label_count++;
-    // 条件式を評価してスタックにpush
-    codegen(node->cond);
-    printf("  pop rax\n");
-    printf("  cmp rax, 0\n");
-    if (node->els) {
-      printf("  je .L.else.%d\n", c);
-      codegen(node->then);
-      printf("  jmp .L.end.%d\n", c);
-      printf(".L.else.%d:\n", c);
-      codegen(node->els);
-    } else {
-      printf("  je .L.end.%d\n", c);
-      codegen(node->then);
-    }
-    printf(".L.end.%d:\n", c);
-    return;
+  // RBPからのオフセットに変数がある
+  printf("  mov rax, rbp\n");
+  printf("  sub rax, %d\n", node->var->offset);
+}
 
-  case ND_FOR:
-    c = label_count++;
-    if (node->init)
-      codegen(node->init);
-    printf(".L.begin.%d:\n", c);
-    if (node->cond) {
-      codegen(node->cond);
-      printf("  pop rax\n");
-      printf("  cmp rax, 0\n");
-      printf("  je .L.end.%d\n", c);
-    }
-    codegen(node->then);
-    if (node->inc)
-      codegen(node->inc);
-    printf("  jmp .L.begin.%d\n", c);
-    printf(".L.end.%d:\n", c);
-    return;
-
-  case ND_RETURN:
-    // return文の右辺(返す値)を計算
-    // 結果はスタックのトップに push される
-    codegen(node->lhs);
-    // スタックから計算結果を取り出し、raxレジスタに格納
-    // raxは関数の戻り値を返す専用レジスタ(x86-64の規約)
-    printf("  pop rax\n");
-    // スタックポインタ(rsp)をベースポインタ(rbp)の位置に戻す
-    // ローカル変数領域を一気に解放
-    printf("  mov rsp, rbp\n");
-    // 保存していた呼び出し元のベースポインタを復元
-    // 関数開始時にpush rbpで保存したものを戻す
-    printf("  pop rbp\n");
-    // 呼び出し元にリターン
-    printf("  ret\n");
-    return;
-
+void gen_expr(Node *node) {
+  switch (node->kind) {
   case ND_NUM:
-    // 数値ならそのままスタックにpush
-    printf("  push %d\n", node->val);
+    printf("  mov rax, %d\n", node->val);
     return;
-  case ND_LVAR:
+  case ND_NEG:
+    // 単項マイナス: lhs を評価してから neg 命令で符号反転
+    gen_expr(node->lhs);
+    printf("  neg rax\n");
+    return;
+  case ND_VAR:
     // 左辺値としてpushした変数のアドレスをスタックにpush
     codegen_lval(node);
-    printf("  pop rax\n");
     printf("  mov rax, [rax]\n");
-    printf("  push rax\n");
     return;
   case ND_ASSIGN:
-    // 左辺値としてpushした変数のアドレスをスタックにpush
-    codegen_lval(node->lhs);
-    // 右辺値を計算してスタックにpush
-    codegen(node->rhs);
+    codegen_lval(node->lhs); // 左辺の変数のアドレスをraxにセット
+    push();  // raxをスタックにpushして退避
+    gen_expr(node->rhs); // 右辺の値をraxにセット
+    pop("rdi"); // 左辺のアドレスをrdiにpop
 
-    printf("  pop rdi\n"); // 右辺の値をRDIに
-    printf("  pop rax\n"); // 左辺のアドレスをRAXに
-    printf("  mov [rax], rdi\n"); // 右辺の値を左辺のアドレスに格納
-    printf("  push rdi\n"); // 式全体の値として右辺の値をpush
+    printf("  mov [rdi], rax\n"); // 右辺の値を左辺のアドレスに格納
     return;
   case ND_FUNCALL:
     int nargs = 0;
     for (Node *arg = node->args; arg; arg = arg->next) {
-      codegen(arg);
+      gen_expr(arg);
+      push();
       nargs++;
     }
 
     for(int i = nargs - 1; i >= 0; i--) {
-      printf("  pop %s\n", argreg[i]);
+      pop(argreg[i]);
     }
     printf("  mov rax, 0\n");
     printf("  call %s\n", node->funcname);
-    printf("  push rax\n");
     return;
   }
 
-  codegen(node->lhs);
-  codegen(node->rhs);
-
-  printf("  pop rdi\n");
-  printf("  pop rax\n");
+  gen_expr(node->rhs);
+  push();
+  gen_expr(node->lhs);
+  pop("rdi");
 
   switch (node->kind) {
   case ND_ADD:
@@ -160,6 +103,93 @@ void codegen(Node *node) {
     printf("  movzb rax, al\n");
     break;
   }
+}
 
-  printf("  push rax\n");
+void gen_stmt(Node *node) {
+  switch (node->kind){
+  case ND_BLOCK:
+    // ブロック内の各文を順番に処理
+    for (Node *n = node->body; n; n = n->next) {
+      gen_stmt(n);
+    }
+    return;
+
+  case ND_NULL_STMT:
+    // 空文は何もしない
+    return;
+
+  case ND_IF:
+    int c = label_count++;
+    // 条件式を評価してスタックにpush
+    gen_expr(node->cond);
+    printf("  cmp rax, 0\n");
+    if (node->els) {
+      printf("  je .L.else.%d\n", c);
+      gen_stmt(node->then);
+      printf("  jmp .L.end.%d\n", c);
+      printf(".L.else.%d:\n", c);
+      gen_stmt(node->els);
+    } else {
+      printf("  je .L.end.%d\n", c);
+      gen_stmt(node->then);
+    }
+    printf(".L.end.%d:\n", c);
+    return;
+
+  case ND_FOR:
+    c = label_count++;
+    if (node->init)
+      gen_stmt(node->init);
+    printf(".L.begin.%d:\n", c);
+    if (node->cond) {
+      gen_expr(node->cond);
+      printf("  cmp rax, 0\n");
+      printf("  je .L.end.%d\n", c);
+    }
+    gen_stmt(node->then);
+    if (node->inc)
+      gen_expr(node->inc);
+    printf("  jmp .L.begin.%d\n", c);
+    printf(".L.end.%d:\n", c);
+    return;
+
+  case ND_RETURN:
+    // return文の右辺(返す値)を計算
+    // 結果はスタックのトップに push される
+    gen_expr(node->lhs);
+    // 関数末尾の共通エピローグへジャンプ
+    // エピローグをインラインで重複生成せず、ラベルにjmpする
+    printf("  jmp .L.return.%s\n", current_fn->name);
+    return;
+  case ND_EXPR_STMT:
+    gen_expr(node->lhs);
+    return;
+  }
+
+  error_tok(node->tok, "invalid statement");
+}
+
+
+void codegen(Function *prog) {
+  printf(".intel_syntax noprefix\n");
+  for (Function *fn = prog; fn; fn = fn->next) {
+    // アセンブリの前半部分を出力
+    printf("  .globl %s\n", fn->name);
+    printf("%s:\n", fn->name);
+    current_fn = fn;
+
+    // プロローグ
+    // 変数26個分の領域を確保する
+    printf("  push rbp\n");
+    printf("  mov rbp, rsp\n");
+    printf("  sub rsp, 208\n");
+
+    gen_stmt(fn->body);
+
+    // エピローグ
+    printf(".L.return.%s:\n", fn->name);
+    printf("  mov rsp, rbp\n");
+    printf("  pop rbp\n");
+    printf("  ret\n");
+  }
 }

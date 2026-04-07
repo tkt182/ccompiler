@@ -27,6 +27,19 @@ void error_at(char *loc, char *fmt, ...) {
   exit(1);
 }
 
+void error_tok(Token *tok, char *fmt, ...) {
+  va_list ap;
+  va_start(ap, fmt);
+
+  int pos = tok->loc - current_input;
+  fprintf(stderr, "%s\n", current_input);
+  fprintf(stderr, "%*s", pos, ""); // print pos spaces.
+  fprintf(stderr, "^ ");
+  vfprintf(stderr, fmt, ap);
+  fprintf(stderr, "\n");
+  exit(1);
+}
+
 bool startswith(char *p, char *q) {
   return memcmp(p, q, strlen(q)) == 0;
 }
@@ -45,10 +58,10 @@ int is_alnum(char c) {
 }
 
 bool is_keyword(Token *tok) {
-  char *kw[] = {"return", "if", "else", "for", "while"};
+  char *kw[] = {"return", "if", "else", "for", "while", "int"};
 
   for (int i = 0; i < sizeof(kw) / sizeof(*kw); i++) {
-    if (startswith(tok->str, kw[i]) && !is_alnum(tok->str[strlen(kw[i])])) {
+    if (startswith(tok->loc, kw[i]) && !is_alnum(tok->loc[strlen(kw[i])])) {
       return true;
     }
   }
@@ -56,10 +69,10 @@ bool is_keyword(Token *tok) {
 }
 
 // 新しいトークンを作成してcurに繋げる
-Token *new_token(TokenKind kind, Token *cur, char *str, int len) {
+Token *new_token(TokenKind kind, Token *cur, char *loc, int len) {
   Token *tok = calloc(1, sizeof(Token));
   tok->kind = kind;
-  tok->str = str;
+  tok->loc = loc;
   tok->len = len;
   cur->next = tok;
   return tok;

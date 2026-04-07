@@ -8,34 +8,9 @@ int main(int argc, char **argv) {
 
   // トークナイズする
   Token *token = tokenize(argv[1]);
-  Node *node = parse(token);
+  Function *prog = parse(token);
 
-  // アセンブリの前半部分を出力
-  printf(".intel_syntax noprefix\n");
-  printf(".globl main\n");
-  printf("main:\n");
-
-  // プロローグ
-  // 変数26個分の領域を確保する
-  printf("  push rbp\n");
-  printf("  mov rbp, rsp\n");
-  printf("  sub rsp, 208\n");
-
-  // 抽象構文木を下りながらコード生成
-  // 連結リストを辿りながらコード生成
-  for (Node *n = node; n; n = n->next) {
-    codegen(n);
-
-    // 最後の文以外は結果をスタックから取り除く
-    // 最後の文の結果は戻り値として使用するためRAXに残す
-    printf("  pop rax\n");
-  }
-
-  // エピローグ
-  // 最後の式の結果がRAXに残っているのでそれが返り値になる
-  printf("  mov rsp, rbp\n");
-  printf("  pop rbp\n");
-  printf("  ret\n");
+  codegen(prog);
 
   return 0;
 }
