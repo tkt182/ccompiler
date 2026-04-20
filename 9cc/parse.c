@@ -1,5 +1,7 @@
 #include "9cc.h"
 
+Type *declspec(Token **rest, Token *token);
+Type *declarator(Token **rest, Token *token, Type *ty);
 Node *compound_stmt(Token **rest, Token *token);
 Node *expr_stmt(Token **rest, Token *token);
 Node *expr(Token **rest, Token *token);
@@ -134,10 +136,31 @@ Type *declspec(Token **rest, Token *token) {
 }
 
 // type-suffix = ("(" func-params)?
+// func-params = param ("," param)*
+// param       = declspec declarator
 Type *type_suffix(Token **rest, Token *token, Type *ty) {
   if (equal(token, "(")) {
-    *rest = skip(token->next, ")");
-    return func_type(ty);
+    // 引数の処理
+    token = token->next;
+
+    Type head = {};
+    Type *cur = &head;
+    while (!equal(token, ")")) {
+      if (cur != &head) {
+        token = skip(token, ",");
+      }
+      // 基本の型を取得
+      Type *base_ty = declspec(&token, token);
+      // 最終的な型を取得(int *, int **などの場合も考慮)
+      Type *param_ty = declarator(&token, token, base_ty);
+      // param_tyはポインタの可能性もあるため、copy(malloc)して新しく生成する
+      cur->next = copy_type(param_ty);
+      cur = cur->next;
+    }
+    ty = func_type(ty);
+    ty->params = head.next;
+    *rest = token->next;
+    return ty;
   }
   *rest = token;
   return ty;
@@ -475,12 +498,22 @@ Node *compound_stmt(Token **rest, Token *token) {
   return node;
 }
 
+void create_param_lvars(Type *param) {
+  if (param) {
+    create_param_lvars(param->next);
+    new_lvar(get_ident(param->name), param);
+  }
+}
+
 Function *function(Token **rest, Token *token) {
   Type *ty = declspec(&token, token);
   ty = declarator(&token, token, ty);
 
   Function *fn = calloc(1, sizeof(Function));
   fn->name = get_ident(ty->name);
+  create_param_lvars(ty->params);
+  fn->params = locals;
+
   token = skip(token, "{");
 
   fn->body = compound_stmt(rest, token);

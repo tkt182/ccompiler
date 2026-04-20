@@ -2,7 +2,7 @@
 
 static int label_count = 0;
 // 関数呼び出しの引数を格納するレジスタ
-static char *argreg[] = {"%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"};
+static char *argreg[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
 Function *current_fn;
 
 void push(void) {
@@ -183,6 +183,12 @@ void codegen(Function *prog) {
     printf("  push rbp\n");
     printf("  mov rbp, rsp\n");
     printf("  sub rsp, 208\n");
+
+    // 引数をスタックにpush
+    int i = 0;
+    for (Obj *var = fn->params; var; var = var->next) {
+      printf("  mov [rbp - %d], %s\n", var->offset, argreg[i++]);
+    }
 
     gen_stmt(fn->body);
 

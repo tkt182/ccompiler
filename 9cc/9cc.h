@@ -47,7 +47,7 @@ typedef struct Obj Obj;
 struct Obj {
   Obj *next;
   char *name; // 変数名
-  Type *ty;   // 型
+  Type *ty;   // 変数・引数そのものの型 (例: int, int* など)
   int offset; // RBPからのオフセット
 };
 
@@ -80,7 +80,11 @@ typedef struct Node Node;
 struct Node {
   NodeKind kind;  // ノードの型
   Node *next;     // 次のノード
-  Type *ty;       // ノードタイプ(今はint型のみ)
+
+  // この式が評価された結果の型
+  // 例: ND_VARなら変数の型、ND_ADDならlhsの型、ND_FUNCALLなら戻り値の型
+  Type *ty;
+
   Token *tok;     // 代表トークン
 
   Node *lhs;      // 左辺
@@ -104,6 +108,7 @@ typedef struct Function Function;
 struct Function {
   Function *next;
   char *name;
+  Obj *params;
   Node *body;
   Obj *locals;
   int stack_size;
@@ -132,11 +137,14 @@ struct Type {
 
   // Function type
   Type *return_ty;
+  Type *params;
+  Type *next;
 };
 
 extern Type *ty_int;
 
 bool is_integer(Type *ty);
+Type *copy_type(Type *ty);
 Type *pointer_to(Type *base);
 Type *func_type(Type *return_ty);
 void add_type(Node *node);
