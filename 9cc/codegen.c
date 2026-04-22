@@ -5,6 +5,8 @@ static int label_count = 0;
 static char *argreg[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
 Function *current_fn;
 
+void gen_expr(Node *node);
+
 void push(void) {
   printf("  push rax\n");
   label_count++;
@@ -15,13 +17,31 @@ void pop(char *arg) {
   label_count--;
 }
 
-void codegen_lval(Node *node) {
-  if (node->kind != ND_VAR)
-    error("代入の左辺値が変数ではありません");
+void gen_addr(Node *node) {
+  switch (node->kind) {
+  case ND_VAR:
+    printf("  lea rax, [rbp - %d]\n", node->var->offset);
+    return;
+  case ND_DEREF:
+    gen_expr(node->lhs);
+    return;
+  }
 
-  // RBPからのオフセットに変数がある
-  printf("  mov rax, rbp\n");
-  printf("  sub rax, %d\n", node->var->offset);
+  error_tok(node->tok, "not an lvalue");
+}
+
+// raxが指すメモリアドレスから値を読み取り、raxレジスタに格納する
+void load(Type *ty) {
+  if (ty->kind == TY_ARRAY) {
+    return;
+  }
+  // メモリ -> rax(読み込み)
+  printf("  mov rax, [rax]\n");
+}
+
+void store(void) {
+  pop("rdi");
+  printf("  mov [rdi], rax\n");
 }
 
 void gen_expr(Node *node) {
@@ -35,17 +55,21 @@ void gen_expr(Node *node) {
     printf("  neg rax\n");
     return;
   case ND_VAR:
-    // 左辺値としてpushした変数のアドレスをスタックにpush
-    codegen_lval(node);
-    printf("  mov rax, [rax]\n");
+    gen_addr(node);
+    load(node->ty);
+    return;
+  case ND_DEREF:
+    gen_expr(node->lhs);
+    load(node->ty);
+    return;
+  case ND_ADDR:
+    gen_addr(node->lhs);
     return;
   case ND_ASSIGN:
-    codegen_lval(node->lhs); // 左辺の変数のアドレスをraxにセット
-    push();  // raxをスタックにpushして退避
+    gen_addr(node->lhs); // 左辺の変数のアドレスをraxにセット
+    push();
     gen_expr(node->rhs); // 右辺の値をraxにセット
-    pop("rdi"); // 左辺のアドレスをrdiにpop
-
-    printf("  mov [rdi], rax\n"); // 右辺の値を左辺のアドレスに格納
+    store();
     return;
   case ND_FUNCALL:
     int nargs = 0;

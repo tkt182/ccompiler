@@ -60,6 +60,8 @@ typedef enum {
   ND_DIV,       // /
   ND_NEG,       // 単項 -
   ND_ASSIGN,    // =
+  ND_ADDR,      // unary &
+  ND_DEREF,     // unary *
   ND_VAR,       // ローカル変数
   ND_EQ,        // ==
   ND_NE,        // !=
@@ -124,16 +126,22 @@ typedef enum {
   TY_INT, // int型
   TY_PTR, // ポインタ型
   TY_FUNC, // 関数型
+  TY_ARRAY, // 配列型
 } TypeKind;
 
 struct Type {
   TypeKind kind;
+  // sizeof() value
+  int size;
 
   // Pointer
   Type *base;
 
   // Declaration
   Token *name;
+
+  // Array
+  int array_len;
 
   // Function type
   Type *return_ty;
@@ -147,6 +155,7 @@ bool is_integer(Type *ty);
 Type *copy_type(Type *ty);
 Type *pointer_to(Type *base);
 Type *func_type(Type *return_ty);
+Type *array_of(Type *base, int size);
 void add_type(Node *node);
 
 

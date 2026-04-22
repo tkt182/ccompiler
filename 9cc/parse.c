@@ -2,6 +2,7 @@
 
 Type *declspec(Token **rest, Token *token);
 Type *declarator(Token **rest, Token *token, Type *ty);
+Node *declaration(Token **rest, Token *token);
 Node *compound_stmt(Token **rest, Token *token);
 Node *expr_stmt(Token **rest, Token *token);
 Node *expr(Token **rest, Token *token);
@@ -101,11 +102,17 @@ char *get_ident(Token *token) {
   return strndup(token->loc, token->len);
 }
 
+int get_number(Token *token) {
+  if (token->kind != TK_NUM)
+    error_tok(token, "expected a number");
+  return token->val;
+}
+
 Obj *new_lvar(char *name, Type *ty) {
   Obj *var = calloc(1, sizeof(Obj));
   var->name = name;
   var->ty = ty;
-  var->offset = locals ? locals->offset + 8 : 8;
+  var->offset = locals ? locals->offset + ty->size : ty->size;
   var->next = locals;
   locals = var;
   return var;
@@ -135,43 +142,55 @@ Type *declspec(Token **rest, Token *token) {
   return ty_int;
 }
 
-// type-suffix = ("(" func-params)?
-// func-params = param ("," param)*
+// func-params = (param ("," param)*)? ")"
 // param       = declspec declarator
+Type *func_params(Token **rest, Token *token, Type *ty) {
+  Type head = {};
+  Type *cur = &head;
+
+  while (!equal(token, ")")) {
+    if (cur != &head) {
+      token = skip(token, ",");
+    }
+    // 基本の型を取得
+    Type *base_ty = declspec(&token, token);
+    // 最終的な型を取得(int *, int **などの場合も考慮)
+    Type *param_ty = declarator(&token, token, base_ty);
+    // param_tyはポインタの可能性もあるため、copy(malloc)して新しく生成する
+    cur->next = copy_type(param_ty);
+    cur = cur->next;
+  }
+
+  ty = func_type(ty);
+  ty->params = head.next;
+  *rest = token->next;
+  return ty;
+}
+
+
+// type-suffix = "(" func-params
+//             | "[" num "]"
+//             | ε
 Type *type_suffix(Token **rest, Token *token, Type *ty) {
   if (equal(token, "(")) {
     // 引数の処理
-    token = token->next;
-
-    Type head = {};
-    Type *cur = &head;
-    while (!equal(token, ")")) {
-      if (cur != &head) {
-        token = skip(token, ",");
-      }
-      // 基本の型を取得
-      Type *base_ty = declspec(&token, token);
-      // 最終的な型を取得(int *, int **などの場合も考慮)
-      Type *param_ty = declarator(&token, token, base_ty);
-      // param_tyはポインタの可能性もあるため、copy(malloc)して新しく生成する
-      cur->next = copy_type(param_ty);
-      cur = cur->next;
-    }
-    ty = func_type(ty);
-    ty->params = head.next;
-    *rest = token->next;
-    return ty;
+    return func_params(rest, token->next, ty);
   }
+  if (equal(token, "[")) {
+    // 配列の処理
+    int len = get_number(token->next);
+    *rest = skip(token->next->next, "]");
+    return array_of(ty, len);
+  }
+
   *rest = token;
   return ty;
 }
 
 // declarator = "*"* ident type-suffix
 Type *declarator(Token **rest, Token *token, Type *ty) {
-  if (consume(rest, "(", token)) {
+  while (consume(&token, "*", token)) {
     ty = pointer_to(ty);
-    expect(rest, ")", *rest);
-    return ty;
   }
 
   if (token->kind != TK_IDENT) {
@@ -180,6 +199,36 @@ Type *declarator(Token **rest, Token *token, Type *ty) {
   ty = type_suffix(rest, token->next, ty);
   ty->name = token;
   return ty;
+}
+
+// declaration = declspec (declarator ("=" expr)? ("," declarator ("=" expr)?)*)? ";"
+Node *declaration(Token **rest, Token *token) {
+  Type *basety = declspec(&token, token);
+
+  Node head = {};
+  Node *cur = &head;
+  int i = 0;
+
+  while (!equal(token, ";")) {
+    if (i++ > 0)
+      token = skip(token, ",");
+
+    Type *ty = declarator(&token, token, basety);
+    Obj *var = new_lvar(get_ident(ty->name), ty);
+
+    if (!equal(token, "="))
+      continue;
+
+    Node *lhs = new_var_node(var, ty->name);
+    Node *rhs = assign(&token, token->next);
+    Node *node = new_binary(ND_ASSIGN, lhs, rhs, token);
+    cur = cur->next = new_unary(ND_EXPR_STMT, node, token);
+  }
+
+  Node *node = new_node(ND_BLOCK, token);
+  node->body = head.next;
+  *rest = token->next;
+  return node;
 }
 
 Node *assign(Token **rest, Token *token) {
@@ -275,7 +324,7 @@ Node *new_add(Node *lhs, Node *rhs, Token *token) {
   }
 
   // ptr + num
-  rhs = new_binary(ND_MUL, rhs, new_num(8, token), token);
+  rhs = new_binary(ND_MUL, rhs, new_num(lhs->ty->base->size, token), token);
   return new_binary(ND_ADD, lhs, rhs, token);
 }
 
@@ -290,7 +339,7 @@ Node *new_sub(Node *lhs, Node *rhs, Token *token) {
 
   // ptr - num
   if (lhs->ty->base && is_integer(rhs->ty)) {
-    rhs = new_binary(ND_MUL, rhs, new_num(8, token), token);
+    rhs = new_binary(ND_MUL, rhs, new_num(lhs->ty->base->size, token), token);
     add_type(rhs);
     Node *node = new_binary(ND_SUB, lhs, rhs, token);
     node->ty = lhs->ty;
@@ -301,7 +350,7 @@ Node *new_sub(Node *lhs, Node *rhs, Token *token) {
   if (lhs->ty->base && rhs->ty->base) {
     Node *node = new_binary(ND_SUB, lhs, rhs, token);
     node->ty = ty_int;
-    return new_binary(ND_DIV, node, new_num(8, token), token);
+    return new_binary(ND_DIV, node, new_num(lhs->ty->base->size, token), token);
   }
 
   error_tok(token, "invalid operands");
@@ -351,6 +400,13 @@ Node *unary(Token **rest, Token *token) {
   if (consume(&token, "-", token)) {
     return new_unary(ND_NEG, unary(rest, token), token);
   }
+  if (consume(&token, "&", token)) {
+    return new_unary(ND_ADDR, unary(rest, token), token);
+  }
+  if (consume(&token, "*", token)) {
+    return new_unary(ND_DEREF, unary(rest, token), token);
+  }
+
   return primary(rest, token);
 }
 
@@ -488,13 +544,16 @@ Node *compound_stmt(Token **rest, Token *token) {
   Node head = {};
   Node *cur = &head;
 
-  while (!consume(&token, "}", token)) {
-    cur->next = stmt(&token, token);
-    cur = cur->next;
+  while (!equal(token, "}")) {
+    if (equal(token, "int"))
+      cur = cur->next = declaration(&token, token);
+    else
+      cur = cur->next = stmt(&token, token);
+    add_type(cur);
   }
 
   node->body = head.next;
-  *rest = token;
+  *rest = token->next; // consume "}"
   return node;
 }
 
