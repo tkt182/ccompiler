@@ -37,8 +37,8 @@ tokenize.c          parse.c                    codegen.c
 |---|---|---|
 | `ND_NUM` | 整数リテラル | `val` |
 | `ND_VAR` | 変数参照 | `var` |
-| `ND_NEG` | 単項マイナス | `lhs` |
-| `ND_ADD` | 加算 | `lhs`, `rhs` |
+| `ND_NEG` | 単項マイナス | `lhs` || `ND_ADDR` | アドレス取得 (`&`) | `lhs` |
+| `ND_DEREF` | デリファレンス (`*`) | `lhs` || `ND_ADD` | 加算 | `lhs`, `rhs` |
 | `ND_SUB` | 減算 | `lhs`, `rhs` |
 | `ND_MUL` | 乗算 | `lhs`, `rhs` |
 | `ND_DIV` | 除算 | `lhs`, `rhs` |
@@ -108,22 +108,31 @@ AST のノードを生成するヘルパー群。
 変数のオフセット計算（rbp からのバイト距離）:
 
 ```
-1個目の変数 → rbp - 8
-2個目の変数 → rbp - 16
-3個目の変数 → rbp - 24  ...
+1個目の変数（int: 8byte）  → rbp - 8
+2個目の変数（int: 8byte）  → rbp - 16
+3個目の変数（int[3]: 24byte）→ rbp - 40  ...
 ```
+
+オフセットは `ty->size` を加算することで、配列など任意サイズの型に対応する。
 
 ---
 
 ### [4] 型パーサ
 
-現在は `int` 型と関数型のみ対応。
+現在は `int` 型、ポインタ型、配列型、関数型に対応。
 
 | 関数 | 役割 |
 |---|---|
 | `declspec` | `"int"` を消費して `ty_int` を返す |
-| `type_suffix` | `(` が続けば関数型に変換 |
-| `declarator` | `*` があればポインタ型。識別子名を `ty->name` に記録 |
+| `func_params` | `)` まで引数型リストをパースして関数型を返す |
+| `type_suffix` | `(` が続けば関数型、`[N]` が続けば配列型、それ以外はそのまま |
+| `declarator` | `*` の数だけポインタ型をラップ。識別子名を `ty->name` に記録 |
+
+配列型 `int x[N]` のパース:
+```
+declspec → ty_int
+declarator → type_suffix で "[N]" を検出 → array_of(ty_int, N) を返す
+```
 
 ---
 
@@ -145,15 +154,19 @@ assign        ← 最低優先（= による代入）
 #### assign
 `equality()` を呼ぶ前に `識別子 + "="` を先読みして未登録変数を自動登録する（暗黙的な変数宣言）。
 
+#### declaration
+`int` キーワードで始まる変数宣言文を処理する。`compound_stmt` が `int` トークンを先読みして `stmt` の代わりに呼ぶ。
+
+- `int x;` → `Obj` を生成してローカル変数リストに追加
+- `int x = 3;` → 変数生成 + `ND_ASSIGN` ノードを `ND_EXPR_STMT` でラップして返す
+- `int x[3];` → `array_of(ty, 3)` で配列型を生成し、必要なサイズ（24byte）分オフセットを確保
+
 #### new_add / new_sub
-ポインタ演算を考慮する。`ptr + num` の場合は `num * 8` に自動変換して要素単位のアドレス計算にする。
+ポインタ・配列演算を考慮する。`ptr + num` の場合は `num * base->size` に自動変換して要素単位のアドレス計算にする（固定値 `8` ではなく `ty->base->size` を使う）。
 
 #### unary
 `-x` は `ND_NEG` ノード（単項マイナス専用）として展開する。  
-`new_unary(ND_NEG, expr, tok)` で `lhs` のみを持つノードを生成し、`codegen.c` 側で `neg rax` 命令1つに変換する。
-
-> **注意**: `new_unary(ND_SUB, ...)` を使うと `rhs = NULL` になり、二項演算パス `codegen(node->rhs)` で Segfault する。  
-> `ND_NEG` を使う場合は `type.c` の `add_type` にも対応を追加すること（`node->ty = node->lhs->ty`）。
+`&x` は `ND_ADDR` ノード、`*x` は `ND_DEREF` ノードとして展開する。
 
 #### primary
 式の末端（葉ノード）を処理する:
@@ -176,7 +189,8 @@ assign        ← 最低優先（= による代入）
 | `{` | `compound_stmt` へ委譲 | |
 | その他 | `expr_stmt`（式文） | |
 
-`compound_stmt` は `{ stmt* }` を処理し、文を `ND_BLOCK` ノードの `body` に連結リストとして繋ぐ。
+`compound_stmt` は `{ stmt* }` を処理し、文を `ND_BLOCK` ノードの `body` に連結リストとして繋ぐ。  
+先頭が `int` トークンなら `declaration`、それ以外は `stmt` として処理する。各文の処理後に `add_type` を呼んで型情報を付与する。
 
 ---
 
@@ -234,17 +248,28 @@ add rax, rdi   → rax = lhs + rhs
 |---|---|
 | `ND_NUM` | `mov rax, <値>` |
 | `ND_NEG` | lhs を評価後 `neg rax` |
-| `ND_VAR` | `codegen_lval` でアドレスを rax に取得 → `mov rax, [rax]` で値を読み込む |
-| `ND_ASSIGN` | lhs のアドレスを push で退避 → rhs を評価 → pop で rdi にアドレス取得 → `mov [rdi], rax` |
+| `ND_VAR` | `gen_addr` でアドレスを rax に取得 → `load` で値を読み込む（配列型はアドレスのまま） |
+| `ND_DEREF` | lhs を評価（ポインタ値を rax に）→ `load` でデリファレンス |
+| `ND_ADDR` | `gen_addr(lhs)` でアドレスだけを rax に返す（デリファレンスしない） |
+| `ND_ASSIGN` | `gen_addr(lhs)` でアドレスを push で退避 → rhs を評価 → `store` で書き込み |
 | `ND_FUNCALL` | 各引数を `gen_expr` + `push` で積む → 逆順に `pop` して引数レジスタ(rdi,rsi...)へ → `call` |
 | 二項演算 | rhs → push → lhs → pop(rdi) → 演算（結果は rax）|
 
-#### codegen_lval
-変数のアドレスを **rax に返す**（push しない）。
-```
-mov rax, rbp
-sub rax, <offset>   ← rax = 変数のアドレス
-```
+#### gen_addr
+変数・デリファレンス式の **アドレスを rax に返す**（値は読まない）。
+
+| ケース | 処理 |
+|---|---|
+| `ND_VAR` | `lea rax, [rbp - offset]` |
+| `ND_DEREF` | `gen_expr(lhs)`（ポインタの値 = 指すアドレスをそのまま rax に） |
+
+#### load
+`rax` が指すアドレスの値を読み込む（`mov rax, [rax]`）。  
+ただし配列型（`TY_ARRAY`）の場合はアドレスをそのまま使うためスキップする。
+
+#### store
+スタックから rdi にアドレスを pop して `mov [rdi], rax` で書き込む。
+
 
 ---
 
@@ -282,17 +307,121 @@ codegen(Function *prog)
 
 | 種類 | 説明 |
 |---|---|
-| `TY_INT` | int 型 |
-| `TY_PTR` | ポインタ型（`base` が指す型へのポインタ）|
+| `TY_INT` | int 型（size = 8）|
+| `TY_PTR` | ポインタ型（`base` が指す型へのポインタ、size = 8）|
 | `TY_FUNC` | 関数型 |
+| `TY_ARRAY` | 配列型（`base` が要素型、`array_len` が要素数、size = base->size * len）|
 
 ### 主な関数
 
 | 関数 | 役割 |
 |---|---|
 | `is_integer` | `TY_INT` かどうか確認 |
-| `pointer_to(base)` | `base` へのポインタ型を生成 |
+| `pointer_to(base)` | `base` へのポインタ型を生成（size = 8） |
 | `func_type(return_ty)` | 関数型を生成 |
+| `array_of(base, len)` | `base` 型の要素を `len` 個持つ配列型を生成（size = base->size * len） |
 | `add_type(node)` | AST を再帰的に走査して各ノードに型をセット |
+
+---
+
+## 主要な構造体
+
+### Token 型
+
+**用途**: `tokenize.c` がソース文字列を分割した結果の1トークンを表す。`parse.c` がこれを消費しながら AST を構築する。
+
+```c
+struct Token {
+  TokenKind kind; // トークンの種類（TK_IDENT / TK_PUNCT / TK_KEYWORD / TK_NUM / TK_EOF）
+  Token *next;    // 次のトークンへのポインタ（単方向連結リスト）
+  int val;        // TK_NUM のときのみ有効な整数値
+  char *loc;      // ソース文字列内でのトークン開始位置（元の文字列へのポインタ）
+  int len;        // トークンの文字数
+};
+```
+
+| フィールド | 説明 |
+|---|---|
+| `kind` | トークン種別。パーサが `equal()` や `consume()` で種類を判定するために使う |
+| `next` | 連結リストの次ポインタ。パーサは `token = token->next` で読み進める |
+| `val` | 数値リテラルの値。`TK_NUM` 以外では未使用 |
+| `loc` | ソース文字列中の位置。エラーメッセージ（`error_tok`）でどこに問題があるか示すために使う |
+| `len` | `loc` から何バイトがこのトークンかを示す。`equal()` での文字列比較に使う |
+
+---
+
+### Node 型
+
+**用途**: パーサが構築する **抽象構文木（AST）のノード**。`gen_expr` / `gen_stmt` が再帰的にたどってアセンブリを出力する。
+
+```c
+struct Node {
+  NodeKind kind;  // ノードの種類
+  Node *next;     // 次のノード（文リスト・引数リスト用）
+  Type *ty;       // この式の評価結果の型（add_type で設定）
+  Token *tok;     // 対応するソーストークン（エラー報告用）
+
+  Node *lhs;      // 左辺（二項演算・単項演算）
+  Node *rhs;      // 右辺（二項演算）
+  Node *cond;     // if / for の条件式
+  Node *then;     // if / for の本体
+  Node *els;      // if の else 節（なければ NULL）
+  Node *init;     // for の初期化式（なければ NULL）
+  Node *inc;      // for の増分式（なければ NULL）
+  Node *body;     // ND_BLOCK の中身（文の連結リスト）
+  char *funcname; // ND_FUNCALL の関数名
+  Node *args;     // ND_FUNCALL の引数リスト（next で連結）
+  int val;        // ND_NUM のときのみ有効な整数値
+  Obj *var;       // ND_VAR のときのみ有効。対応するローカル変数
+};
+```
+
+フィールドは `NodeKind` によって使われるものが異なる（ユニオンの代わりに全フィールドを持つ設計）。
+
+| フィールド | 主な用途 |
+|---|---|
+| `ty` | コード生成時にポインタ算術やロード幅の判断に使う（`add_type` が設定） |
+| `tok` | エラー発生時に `error_tok(node->tok, ...)` でソース位置を報告する |
+| `next` | `ND_BLOCK` の `body` 内の文リストや `ND_FUNCALL` の引数リストの連結に使う |
+| `var` | `ND_VAR` ノードが対応する `Obj`（変数）を直接参照する |
+
+---
+
+### Type 型
+
+**用途**: 変数・式・関数パラメータなどが持つ **型情報**。ポインタ算術のオフセット計算、配列アドレスのロードスキップ、型エラー検出などに使う。
+
+```c
+struct Type {
+  TypeKind kind;   // 型の種類（TY_INT / TY_PTR / TY_FUNC / TY_ARRAY）
+  int size;        // sizeof() 相当のバイト数
+
+  Type *base;      // ポインタ・配列の「指す先/要素の型」
+
+  Token *name;     // 宣言時の識別子トークン（変数名・関数名）
+
+  int array_len;   // TY_ARRAY のときの要素数
+
+  Type *return_ty; // TY_FUNC の戻り値型
+  Type *params;    // TY_FUNC の引数型リスト（next で連結）
+  Type *next;      // 引数リスト内の次の型
+};
+```
+
+| フィールド | 説明 |
+|---|---|
+| `size` | 変数のスタック確保量（`new_lvar` でオフセット計算）や配列全体のバイト数に使う |
+| `base` | `TY_PTR` → 指す先の型。`TY_ARRAY` → 要素型。ポインタ算術で `base->size` を掛けることで要素単位のアドレスを計算する |
+| `name` | 宣言パース後に `declarator` がセットする。変数登録時に `ty->name` から変数名を取得する |
+| `array_len` | `TY_ARRAY` でのみ使用。要素数を記録する（`size = base->size * array_len`） |
+| `return_ty` / `params` | `TY_FUNC` でのみ使用。関数型の戻り値型・引数型を保持する |
+
+#### 型の構造例
+
+```
+int *p     → TY_PTR { size=8, base → TY_INT { size=8 } }
+int x[3]   → TY_ARRAY { size=24, array_len=3, base → TY_INT { size=8 } }
+int **pp   → TY_PTR { size=8, base → TY_PTR { size=8, base → TY_INT { size=8 } } }
+```
 
 `add_type` は `new_add` / `new_sub` など型に依存する演算の前に呼ぶ必要がある。
