@@ -169,7 +169,7 @@ Type *func_params(Token **rest, Token *token, Type *ty) {
 
 
 // type-suffix = "(" func-params
-//             | "[" num "]"
+//             | "[" num "]" type-suffix
 //             | ε
 Type *type_suffix(Token **rest, Token *token, Type *ty) {
   if (equal(token, "(")) {
@@ -179,7 +179,8 @@ Type *type_suffix(Token **rest, Token *token, Type *ty) {
   if (equal(token, "[")) {
     // 配列の処理
     int len = get_number(token->next);
-    *rest = skip(token->next->next, "]");
+    token = skip(token->next->next, "]");
+    ty = type_suffix(rest, token, ty);
     return array_of(ty, len);
   }
 
