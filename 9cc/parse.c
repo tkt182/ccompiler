@@ -11,6 +11,7 @@ Node *equality(Token **rest, Token *token);
 Node *relational(Token **rest, Token *token);
 Node *add(Token **rest, Token *token);
 Node *mul(Token **rest, Token *token);
+Node *postfix(Token **rest, Token *token);
 Node *unary(Token **rest, Token *token);
 Node *primary(Token **rest, Token *token);
 
@@ -393,7 +394,7 @@ Node *mul(Token **rest, Token *token) {
   }
 }
 
-// unary = ("+" | "-")? unary | primary
+// unary = ("+" | "-" | "&" | "*")? unary | postfix
 Node *unary(Token **rest, Token *token) {
   if (consume(&token, "+", token)) {
     return unary(rest, token);
@@ -408,7 +409,23 @@ Node *unary(Token **rest, Token *token) {
     return new_unary(ND_DEREF, unary(rest, token), token);
   }
 
-  return primary(rest, token);
+  return postfix(rest, token);
+}
+
+// postfix = primary ("[" expr "]")*
+Node *postfix(Token **rest, Token *token) {
+  Node *node = primary(&token, token);
+
+  while (equal(token, "[")) {
+    // x[y] is short for *(x+y)
+    Token *start = token;
+    Node *idx = expr(&token, token->next);
+    token = skip(token, "]");
+    node = new_unary(ND_DEREF, new_add(node, idx, start), start);
+  }
+  *rest = token;
+  return node;
+
 }
 
 // funcall = ident "(" (assign ("," assign)*)? ")"
@@ -594,7 +611,9 @@ equality   = relational ("==" relational | "!=" relational)*
 relational = add ("<" add | "<=" add | ">" add | ">=" add)*
 add        = mul ("+" mul | "-" mul)*
 mul        = unary ("*" unary | "/" unary)*
-unary      = ("+" | "-")? primary
+unary      = ("+" | "-" | "*" | "&") unary
+           | postfix
+postfix    = primary ("[" expr "]")*
 primary    = ident
               | "(" (assign ("," assign)*)? ")"
               | num
