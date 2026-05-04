@@ -125,13 +125,23 @@ AST のノードを生成するヘルパー群。
 |---|---|
 | `declspec` | `"int"` を消費して `ty_int` を返す |
 | `func_params` | `)` まで引数型リストをパースして関数型を返す |
-| `type_suffix` | `(` が続けば関数型、`[N]` が続けば配列型、それ以外はそのまま |
+| `type_suffix` | `(` が続けば関数型、`[N]` が続けば**再帰的に**配列型をネスト、それ以外はそのまま |
 | `declarator` | `*` の数だけポインタ型をラップ。識別子名を `ty->name` に記録 |
 
 配列型 `int x[N]` のパース:
 ```
 declspec → ty_int
 declarator → type_suffix で "[N]" を検出 → array_of(ty_int, N) を返す
+```
+
+多次元配列 `int x[2][3]` のパース（`type_suffix` の再帰）:
+```
+type_suffix(token=[2][3], ty=TY_INT)
+  └─ [2] を読み取り、再帰: type_suffix(token=[3], ty=TY_INT)
+       └─ [3] を読み取り、再帰: type_suffix(token=ε, ty=TY_INT)
+            └─ TY_INT をそのまま返す
+       └─ array_of(TY_INT, 3) を返す
+  └─ array_of(array_of(TY_INT, 3), 2) を返す
 ```
 
 ---
@@ -419,9 +429,12 @@ struct Type {
 #### 型の構造例
 
 ```
-int *p     → TY_PTR { size=8, base → TY_INT { size=8 } }
-int x[3]   → TY_ARRAY { size=24, array_len=3, base → TY_INT { size=8 } }
-int **pp   → TY_PTR { size=8, base → TY_PTR { size=8, base → TY_INT { size=8 } } }
+int *p        → TY_PTR { size=8, base → TY_INT { size=8 } }
+int x[3]      → TY_ARRAY { size=24, array_len=3, base → TY_INT { size=8 } }
+int x[2][3]   → TY_ARRAY { size=48, array_len=2,
+                  base → TY_ARRAY { size=24, array_len=3,
+                           base → TY_INT { size=8 } } }
+int **pp      → TY_PTR { size=8, base → TY_PTR { size=8, base → TY_INT { size=8 } } }
 ```
 
 `add_type` は `new_add` / `new_sub` など型に依存する演算の前に呼ぶ必要がある。
