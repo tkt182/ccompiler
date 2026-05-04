@@ -453,10 +453,25 @@ Node *funcall(Token **rest, Token *token) {
   return node;
 }
 
-// primary = ident
-//            | "(" (assign ("," assign)*)? ")"
+// primary = "(" expr ")"
+//            | sizeof unary
+//            | ident func-args?
 //            | num
 Node *primary(Token **rest, Token *token) {
+  // "(" expr ")"
+  if (consume(&token, "(", token)) {
+    Node *node = expr(&token, token);
+    expect(&token, ")", token);
+    *rest = token;
+    return node;
+  }
+
+  if (equal(token, "sizeof")) {
+    Node *node = unary(rest, token->next);
+    add_type(node);
+    return new_num(node->ty->size, token);
+  }
+
   Token *tok = consume_ident(&token, token);
   if (tok) {
 
@@ -471,14 +486,6 @@ Node *primary(Token **rest, Token *token) {
     }
     *rest = token;
     return new_var_node(var, tok);
-  }
-
-  // 次のトークンが"("なら、"(" expr ")"のはず
-  if (consume(&token, "(", token)) {
-    Node *node = expr(&token, token);
-    expect(&token, ")", token);
-    *rest = token;
-    return node;
   }
 
   // そうでなければ数値のはず
