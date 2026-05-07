@@ -24,7 +24,11 @@ int align_to(int n, int align) {
 void gen_addr(Node *node) {
   switch (node->kind) {
   case ND_VAR:
-    printf("  lea rax, [rbp - %d]\n", node->var->offset);
+    if (node->var->is_local) {
+      printf("  lea rax, [rbp - %d]\n", node->var->offset);
+    } else {
+      printf("  lea rax, [rip + %s]\n", node->var->name);
+    }
     return;
   case ND_DEREF:
     gen_expr(node->lhs);
@@ -212,18 +216,25 @@ void assign_lvar_offsets(Obj *prog) {
   }
 }
 
+void emit_data(Obj *prog) {
+  for (Obj *var = prog; var; var = var->next) {
+    if (var->is_function) {
+      continue;
+    }
 
-void codegen(Obj *prog) {
-  printf(".intel_syntax noprefix\n");
+    printf("  .data\n");
+    printf("  .globl %s\n", var->name);
+    printf("%s:\n", var->name);
+    printf("  .zero %d\n", var->ty->size);
+  }
+}
 
-  assign_lvar_offsets(prog);
-
+void emit_text(Obj *prog) {
   for (Obj *fn = prog; fn; fn = fn->next) {
     if (!fn->is_function) {
       continue;
     }
 
-    // アセンブリの前半部分を出力
     printf("  .globl %s\n", fn->name);
     printf("  .text\n");
     printf("%s:\n", fn->name);
@@ -248,4 +259,12 @@ void codegen(Obj *prog) {
     printf("  pop rbp\n");
     printf("  ret\n");
   }
+}
+
+void codegen(Obj *prog) {
+  printf(".intel_syntax noprefix\n");
+
+  assign_lvar_offsets(prog);
+  emit_data(prog);
+  emit_text(prog);
 }
