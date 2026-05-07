@@ -16,6 +16,7 @@ Node *unary(Token **rest, Token *token);
 Node *primary(Token **rest, Token *token);
 
 Obj *locals; // ローカル変数リストの先頭
+Obj *globals; // グローバル変数・関数リストの先頭
 
 bool equal(Token *token, char *op) {
   return memcmp(token->loc, op, token->len) == 0 && op[token->len] == '\0';
@@ -109,15 +110,30 @@ int get_number(Token *token) {
   return token->val;
 }
 
-Obj *new_lvar(char *name, Type *ty) {
+Obj *new_var(char *name, Type *ty) {
   Obj *var = calloc(1, sizeof(Obj));
   var->name = name;
   var->ty = ty;
-  var->offset = locals ? locals->offset + ty->size : ty->size;
+  return var;
+}
+
+// ローカル変数
+Obj *new_lvar(char *name, Type *ty) {
+  Obj *var = new_var(name, ty);
+  var->is_local = true;
   var->next = locals;
   locals = var;
   return var;
 }
+
+// グローバル変数
+Obj *new_gvar(char *name, Type *ty) {
+  Obj *var = new_var(name, ty);
+  var->next = globals;
+  globals = var;
+  return var;
+}
+
 
 Token *consume_ident(Token **rest, Token *token) {
   if (token->kind != TK_IDENT) {
@@ -237,7 +253,7 @@ Node *assign(Token **rest, Token *token) {
   // 識別子の直後に "=" が続く場合、未登録なら変数を作る
   if (token->kind == TK_IDENT && equal(token->next, "=")) {
     if (!find_var(token)) {
-      new_lvar(strndup(token->loc, token->len), ty_int);
+      new_var(strndup(token->loc, token->len), ty_int);
     }
   }
 
@@ -589,19 +605,21 @@ void create_param_lvars(Type *param) {
   }
 }
 
-Function *function(Token **rest, Token *token) {
-  Type *ty = declspec(&token, token);
-  ty = declarator(&token, token, ty);
+Token *function(Token *token, Type *basety) {
+  Type *ty = declarator(&token, token, basety);
 
-  Function *fn = calloc(1, sizeof(Function));
-  fn->name = get_ident(ty->name);
+  Obj *fn = new_gvar(get_ident(ty->name), ty);
+  fn->is_function = true;
+
+  locals = NULL;
+
   create_param_lvars(ty->params);
   fn->params = locals;
 
   token = skip(token, "{");
-
-  fn->body = compound_stmt(rest, token);
-  return fn;
+  fn->body = compound_stmt(&token, token);
+  fn->locals = locals;
+  return token;
 }
 
 /*
@@ -626,14 +644,13 @@ primary    = ident
               | num
 */
 
-Function *parse(Token *token) {
-  Function head = {};
-  Function *cur = &head;
+Obj *parse(Token *token) {
+  globals = NULL;
 
   while (!at_eof(token)) {
-    cur->next = function(&token, token);
-    cur = cur->next;
+    Type *basety = declspec(&token, token);
+    token = function(token, basety);
   }
 
-  return head.next;
+  return globals;
 }

@@ -8,6 +8,7 @@
 #include <string.h>
 
 typedef struct Type Type;
+typedef struct Node Node;
 
 //
 // tokenize.c
@@ -42,13 +43,24 @@ Token *tokenize(char *input);
 // parse.c
 //
 
-// Local variable
+// Variable or function
 typedef struct Obj Obj;
 struct Obj {
   Obj *next;
   char *name; // 変数名
   Type *ty;   // 変数・引数そのものの型 (例: int, int* など)
-  int offset; // RBPからのオフセット
+  bool is_local; // ローカル or グローバル(変数/関数)
+
+  // ローカル変数
+  int offset; // ローカル変数(RBPからのオフセット)
+
+  bool is_function; // 関数かどうか
+
+  // 関数用
+  Obj *params;
+  Node *body;
+  Obj *locals;
+  int stack_size;
 };
 
 
@@ -105,19 +117,7 @@ struct Node {
 };
 
 
-// Function
-typedef struct Function Function;
-struct Function {
-  Function *next;
-  char *name;
-  Obj *params;
-  Node *body;
-  Obj *locals;
-  int stack_size;
-};
-
-
-Function *parse(Token *tok);
+Obj *parse(Token *tok);
 
 //
 // type.c
@@ -162,4 +162,4 @@ void add_type(Node *node);
 //
 // codegen.c
 //
-void codegen(Function *prog);
+void codegen(Obj *prog);

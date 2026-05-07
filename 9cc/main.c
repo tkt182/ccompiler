@@ -6,9 +6,9 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  // トークナイズする
+  // tokenize and parse
   Token *token = tokenize(argv[1]);
-  Function *prog = parse(token);
+  Obj *prog = parse(token);
 
   codegen(prog);
 

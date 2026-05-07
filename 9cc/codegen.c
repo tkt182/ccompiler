@@ -3,7 +3,7 @@
 static int label_count = 0;
 // 関数呼び出しの引数を格納するレジスタ
 static char *argreg[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
-Function *current_fn;
+Obj *current_fn;
 
 void gen_expr(Node *node);
 
@@ -15,6 +15,10 @@ void push(void) {
 void pop(char *arg) {
   printf("  pop %s\n", arg);
   label_count--;
+}
+
+int align_to(int n, int align) {
+  return (n + align - 1) / align * align;
 }
 
 void gen_addr(Node *node) {
@@ -193,20 +197,42 @@ void gen_stmt(Node *node) {
   error_tok(node->tok, "invalid statement");
 }
 
+void assign_lvar_offsets(Obj *prog) {
+  for (Obj *fn = prog; fn; fn = fn->next) {
+    if (!fn->is_function) {
+      continue;
+    }
 
-void codegen(Function *prog) {
+    int offset = 0;
+    for (Obj *var = fn->locals; var; var = var->next) {
+      offset += var->ty->size;
+      var->offset = offset;
+    }
+    fn->stack_size = align_to(offset, 16);
+  }
+}
+
+
+void codegen(Obj *prog) {
   printf(".intel_syntax noprefix\n");
-  for (Function *fn = prog; fn; fn = fn->next) {
+
+  assign_lvar_offsets(prog);
+
+  for (Obj *fn = prog; fn; fn = fn->next) {
+    if (!fn->is_function) {
+      continue;
+    }
+
     // アセンブリの前半部分を出力
     printf("  .globl %s\n", fn->name);
+    printf("  .text\n");
     printf("%s:\n", fn->name);
     current_fn = fn;
 
     // プロローグ
-    // 変数26個分の領域を確保する
     printf("  push rbp\n");
     printf("  mov rbp, rsp\n");
-    printf("  sub rsp, 208\n");
+    printf("  sub rsp, %d\n", fn->stack_size);
 
     // 引数をスタックにpush
     int i = 0;
