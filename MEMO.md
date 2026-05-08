@@ -101,9 +101,11 @@ AST のノードを生成するヘルパー群。
 | 関数 | 役割 |
 |---|---|
 | `get_ident` | トークンが識別子なら名前文字列を返す |
-| `new_lvar` | 新しいローカル変数を `locals` リストの先頭に追加。`offset` は `Obj` 側で自動計算 |
+| `new_var` | `Obj` を生成する基底関数（リストへの追加はしない） |
+| `new_lvar` | 新しいローカル変数を `locals` リストの先頭に追加 |
+| `new_gvar` | 新しいグローバル変数・関数を `globals` リストの先頭に追加 |
 | `consume_ident` | 識別子トークンなら読み進めてそのトークンを返す |
-| `find_var` | `locals` リストを線形探索して変数を返す |
+| `find_var` | `locals` → `globals` の順に線形探索して変数を返す |
 
 変数のオフセット計算（rbp からのバイト距離）:
 
@@ -220,16 +222,26 @@ assign        ← 最低優先（= による代入）
 
 ```
 parse()
-  └─ function()  ← EOF までループで関数定義を1つずつ処理
-                    Function の連結リストにして返す
+  ├─ is_function() で関数かグローバル変数かを判定
+  ├─ function()         ← 関数定義を処理し globals に追加
+  └─ global_variable()  ← グローバル変数宣言を処理し globals に追加
 ```
+
+`parse` は `globals`（`Obj` の連結リスト）を返す。関数・グローバル変数ともに `globals` に入り、`is_function` フラグで区別する。
 
 #### function()
 `declspec` → `declarator` の順に型と関数名をパースし、`compound_stmt` で本体を処理する。
-- `fn->name` は `declarator` が `ty->name` にセットしたトークンから `get_ident()` で取得する
-- `compound_stmt` 自身が `{` を消費するため、呼び出し側で `{` を skip してはいけない
+- `new_gvar` で `globals` に追加し、`is_function = true` をセット
+- `fn->locals` に関数内のローカル変数リストを保存
+- 処理済みの `Token *` を返す（呼び出し元がトークン位置を進めるため）
 
-この `Function` の連結リストが `main.c` → `codegen.c` に渡される。
+#### global_variable()
+`int x, y;` のようなグローバル変数宣言を処理する。`,` 区切りで複数変数を `new_gvar` で `globals` に追加する。
+
+#### is_function()
+`declarator` を試し呼びして型が `TY_FUNC` かどうかで関数/変数を判定する。
+
+この `globals` リストが `main.c` → `codegen.c` に渡される。
 
 ---
 
@@ -282,7 +294,8 @@ add rax, rdi   → rax = lhs + rhs
 
 | ケース | 処理 |
 |---|---|
-| `ND_VAR` | `lea rax, [rbp - offset]` |
+| `ND_VAR`（ローカル） | `lea rax, [rbp - offset]` |
+| `ND_VAR`（グローバル） | `lea rax, [rip + 変数名]`（RIP相対アドレッシング） |
 | `ND_DEREF` | `gen_expr(lhs)`（ポインタの値 = 指すアドレスをそのまま rax に） |
 
 #### load
@@ -311,13 +324,24 @@ add rax, rdi   → rax = lhs + rhs
 ### codegen のフロー
 
 ```
-codegen(Function *prog)
+codegen(Obj *prog)
   ├─ .intel_syntax noprefix
-  └─ 各 Function ごとに
-       ├─ プロローグ: push rbp / mov rbp, rsp / sub rsp, 208
+  ├─ assign_lvar_offsets() ← 各関数のローカル変数にオフセットを割り当て
+  ├─ emit_data()           ← グローバル変数を .data セクションに出力
+  └─ emit_text()           ← 各関数を .text セクションに出力
+       ├─ プロローグ: push rbp / mov rbp, rsp / sub rsp, <stack_size>
        ├─ gen_stmt(fn->body)
        └─ エピローグ: .L.return.<name>: / mov rsp, rbp / pop rbp / ret
 ```
+
+#### assign_lvar_offsets
+各関数の `locals` リストを走査し、`var->offset` を `ty->size` の累積値として設定する。`stack_size` は `align_to(offset, 16)` で16バイトアライン（x86-64 ABI要件）。
+
+#### emit_data
+`is_function = false` の `Obj`（グローバル変数）を `.data` セクションに出力する。初期値なしのグローバル変数は `.zero <size>` でゼロ初期化。
+
+#### emit_text
+`is_function = true` の `Obj`（関数）を `.text` セクションに出力する。各関数の前に `.text` を出力することで、`emit_data` 後もコードセクションに正しく切り替わる。
 
 ---
 
