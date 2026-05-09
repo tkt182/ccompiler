@@ -159,8 +159,13 @@ Obj *find_var(Token *token) {
   return NULL;
 }
 
-// declspec = "int"
+// declspec = "char" | "int"
 Type *declspec(Token **rest, Token *token) {
+  if (equal(token, "char")) {
+    *rest = token->next;
+    return ty_char;
+  }
+
   *rest = skip(token, "int");
   return ty_int;
 }
@@ -253,6 +258,11 @@ Node *declaration(Token **rest, Token *token) {
   node->body = head.next;
   *rest = token->next;
   return node;
+}
+
+// Returns true if a given token represents a type
+bool is_typename(Token *tok) {
+  return equal(tok, "char") || equal(tok, "int");
 }
 
 Node *assign(Token **rest, Token *token) {
@@ -592,10 +602,11 @@ Node *compound_stmt(Token **rest, Token *token) {
   Node *cur = &head;
 
   while (!equal(token, "}")) {
-    if (equal(token, "int"))
+    if (is_typename(token)) {
       cur = cur->next = declaration(&token, token);
-    else
+    } else {
       cur = cur->next = stmt(&token, token);
+    }
     add_type(cur);
   }
 

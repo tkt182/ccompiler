@@ -2,7 +2,8 @@
 
 static int label_count = 0;
 // 関数呼び出しの引数を格納するレジスタ
-static char *argreg[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
+static char *argreg8[] = {"dil", "sil", "dl", "cl", "r8b", "r9b"};
+static char *argreg64[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
 Obj *current_fn;
 
 void gen_expr(Node *node);
@@ -44,12 +45,21 @@ void load(Type *ty) {
     return;
   }
   // メモリ -> rax(読み込み)
-  printf("  mov rax, [rax]\n");
+  if (ty->size == 1) {
+    printf("  movzx rax, byte ptr [rax]\n");
+  } else {
+    printf("  mov rax, [rax]\n");
+  }
 }
 
-void store(void) {
+void store(Type *ty) {
   pop("rdi");
-  printf("  mov [rdi], rax\n");
+
+  if (ty->size == 1) {
+    printf("  mov [rdi], al\n");
+  } else {
+    printf("  mov [rdi], rax\n");
+  }
 }
 
 void gen_expr(Node *node) {
@@ -77,18 +87,19 @@ void gen_expr(Node *node) {
     gen_addr(node->lhs); // 左辺の変数のアドレスをraxにセット
     push();
     gen_expr(node->rhs); // 右辺の値をraxにセット
-    store();
+    store(node->ty);
     return;
   case ND_FUNCALL:
     int nargs = 0;
+    // 全引数をスタックに積む
     for (Node *arg = node->args; arg; arg = arg->next) {
       gen_expr(arg);
       push();
       nargs++;
     }
-
+    // 逆順にスタックからレジスタに値を移す
     for(int i = nargs - 1; i >= 0; i--) {
-      pop(argreg[i]);
+      pop(argreg64[i]);
     }
     printf("  mov rax, 0\n");
     printf("  call %s\n", node->funcname);
@@ -248,7 +259,11 @@ void emit_text(Obj *prog) {
     // 引数をスタックにpush
     int i = 0;
     for (Obj *var = fn->params; var; var = var->next) {
-      printf("  mov [rbp - %d], %s\n", var->offset, argreg[i++]);
+      if (var->ty->size == 1) {
+        printf("  mov [rbp - %d], %s\n", var->offset, argreg8[i++]);
+      } else {
+        printf("  mov [rbp - %d], %s\n", var->offset, argreg64[i++]);
+      }
     }
 
     gen_stmt(fn->body);
