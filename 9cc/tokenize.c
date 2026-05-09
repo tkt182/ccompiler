@@ -78,6 +78,21 @@ Token *new_token(TokenKind kind, Token *cur, char *loc, int len) {
   return tok;
 }
 
+
+Token *read_string_literal(char *start, Token *cur) {
+  char *p = start + 1;
+  for (; *p != '"'; p++) {
+    if (*p == '\n' || *p == '\0') {
+      error_at(start, "unclosed string literal");
+    }
+  }
+
+  Token *token = new_token(TK_STR, cur, start, p + 1 - start);
+  token->ty = array_of(ty_char, p - start);
+  token->str = strndup(start + 1, p - start - 1);
+  return token;
+}
+
 // 入力文字列pをトークナイズしてそれを返す
 Token *tokenize(char *p) {
   current_input = p;
@@ -109,6 +124,13 @@ Token *tokenize(char *p) {
       char *q = p;
       cur->val = strtol(p, &p, 10);
       cur->len = p - q; // トークンの長さを設定
+      continue;
+    }
+
+    // 文字列リテラル
+    if (*p == '"') {
+      cur = cur->next = read_string_literal(p, cur);
+      p += cur->len;
       continue;
     }
 

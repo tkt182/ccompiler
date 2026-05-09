@@ -19,6 +19,7 @@ typedef enum {
   TK_IDENT,    // 変数
   TK_PUNCT,    // 区切り文字
   TK_KEYWORD,  // キーワード
+  TK_STR,      // 文字列リテラル
   TK_NUM,      // 整数トークン
   TK_EOF,      // 入力の終わりを表すトークン
 } TokenKind;
@@ -31,6 +32,8 @@ struct Token {
   int val;        // kindがTK_NUMの場合、その数値
   char *loc;      // トークン文字列の位置
   int len;        // トークンの長さ
+  Type *ty;       // kindがTK_STRの場合、その文字列リテラルの型
+  char *str;      // kindがTK_STRの場合、その文字列リテラルの内容
 };
 
 void error(char *fmt, ...);
@@ -55,6 +58,9 @@ struct Obj {
   int offset; // ローカル変数(RBPからのオフセット)
 
   bool is_function; // 関数かどうか
+
+  // グローバル変数
+  char *init_data;
 
   // 関数用
   Obj *params;

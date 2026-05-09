@@ -134,6 +134,22 @@ Obj *new_gvar(char *name, Type *ty) {
   return var;
 }
 
+char *new_unique_name(void) {
+  static int id = 0;
+  char *buf = calloc(1, 20);
+  sprintf(buf, ".L..%d", id++);
+  return buf;
+}
+
+Obj *new_anon_gvar(Type *ty) {
+  return new_gvar(new_unique_name(), ty);
+}
+
+Obj *new_string_literal(char *p, Type *ty) {
+  Obj *var = new_anon_gvar(ty);
+  var->init_data = p;
+  return var;
+}
 
 Token *consume_ident(Token **rest, Token *token) {
   if (token->kind != TK_IDENT) {
@@ -488,6 +504,7 @@ Node *funcall(Token **rest, Token *token) {
 // primary = "(" expr ")"
 //            | sizeof unary
 //            | ident func-args?
+//            | str
 //            | num
 Node *primary(Token **rest, Token *token) {
   // "(" expr ")"
@@ -518,6 +535,12 @@ Node *primary(Token **rest, Token *token) {
     }
     *rest = token;
     return new_var_node(var, tok);
+  }
+
+  if (token->kind == TK_STR) {
+    Obj *var = new_string_literal(token->str, token->ty);
+    *rest = token->next;
+    return new_var_node(var, token);
   }
 
   // そうでなければ数値のはず
