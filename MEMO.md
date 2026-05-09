@@ -121,11 +121,12 @@ AST のノードを生成するヘルパー群。
 
 ### [4] 型パーサ
 
-現在は `int` 型、ポインタ型、配列型、関数型に対応。
+現在は `char` 型、`int` 型、ポインタ型、配列型、関数型に対応。
 
 | 関数 | 役割 |
 |---|---|
-| `declspec` | `"int"` を消費して `ty_int` を返す |
+| `declspec` | `"char"` または `"int"` を消費して対応する型を返す |
+| `is_typename` | 現在のトークンが型名（`"char"` または `"int"`）かどうかを判定 |
 | `func_params` | `)` まで引数型リストをパースして関数型を返す |
 | `type_suffix` | `(` が続けば関数型、`[N]` が続けば**再帰的に**配列型をネスト、それ以外はそのまま |
 | `declarator` | `*` の数だけポインタ型をラップ。識別子名を `ty->name` に記録 |
@@ -214,7 +215,7 @@ assign        ← 最低優先（= による代入）
 | その他 | `expr_stmt`（式文） | |
 
 `compound_stmt` は `{ stmt* }` を処理し、文を `ND_BLOCK` ノードの `body` に連結リストとして繋ぐ。  
-先頭が `int` トークンなら `declaration`、それ以外は `stmt` として処理する。各文の処理後に `add_type` を呼んで型情報を付与する。
+先頭が型名（`is_typename` で判定）なら `declaration`、それ以外は `stmt` として処理する。各文の処理後に `add_type` を呼んで型情報を付与する。
 
 ---
 
@@ -286,7 +287,7 @@ add rax, rdi   → rax = lhs + rhs
 | `ND_DEREF` | lhs を評価（ポインタ値を rax に）→ `load` でデリファレンス |
 | `ND_ADDR` | `gen_addr(lhs)` でアドレスだけを rax に返す（デリファレンスしない） |
 | `ND_ASSIGN` | `gen_addr(lhs)` でアドレスを push で退避 → rhs を評価 → `store` で書き込み |
-| `ND_FUNCALL` | 各引数を `gen_expr` + `push` で積む → 逆順に `pop` して引数レジスタ(rdi,rsi...)へ → `call` |
+| `ND_FUNCALL` | 各引数を `gen_expr` + `push rax` で積む → 逆順に `pop argreg64` して引数レジスタへ → `call` |
 | 二項演算 | rhs → push → lhs → pop(rdi) → 演算（結果は rax）|
 
 #### gen_addr
@@ -299,11 +300,32 @@ add rax, rdi   → rax = lhs + rhs
 | `ND_DEREF` | `gen_expr(lhs)`（ポインタの値 = 指すアドレスをそのまま rax に） |
 
 #### load
-`rax` が指すアドレスの値を読み込む（`mov rax, [rax]`）。  
-ただし配列型（`TY_ARRAY`）の場合はアドレスをそのまま使うためスキップする。
+`rax` が指すアドレスから値を読み込み `rax` に上書きする。
+
+| 型 | 命令 | 説明 |
+|---|---|---|
+| `TY_ARRAY` | （スキップ） | 配列はアドレスをそのまま使う |
+| `TY_CHAR`（size=1） | `movzx rax, byte ptr [rax]` | 1バイト読み込み。上位56ビットをゼロ拡張して `rax` 全体を更新 |
+| その他（size=8） | `mov rax, [rax]` | 8バイト読み込み |
+
+`byte ptr` はメモリから読むバイト数（1バイト）を指定するサイズ指定子。  
+x86-64では `al`（下位8ビット）への書き込みは上位56ビットが変化しないため、`movzx` でゼロ拡張が必要。
 
 #### store
-スタックから rdi にアドレスを pop して `mov [rdi], rax` で書き込む。
+スタックから左辺のアドレスを `rdi` に取り出し、`rax` の値を書き込む。
+
+| 型 | 命令 | 説明 |
+|---|---|---|
+| `TY_CHAR`（size=1） | `mov [rdi], al` | `rax` の下位8ビットのみ1バイト書き込む |
+| その他（size=8） | `mov [rdi], rax` | 8バイト書き込む |
+
+#### 引数レジスタ
+
+| 用途 | レジスタ | 説明 |
+|---|---|---|
+| 呼び出し元（`ND_FUNCALL`） | `argreg64`（`rdi`,`rsi`,...） | ABIの規約で常に64ビットレジスタで渡す |
+| 呼び出し先（`emit_text`）`char` | `argreg8`（`dil`,`sil`,...） | 下位8ビット = `argreg64` の下位8ビット |
+| 呼び出し先（`emit_text`）その他 | `argreg64`（`rdi`,`rsi`,...） | 8バイトでスタックに保存 |
 
 
 ---
@@ -353,6 +375,7 @@ codegen(Obj *prog)
 
 | 種類 | 説明 |
 |---|---|
+| `TY_CHAR` | char 型（size = 1）|
 | `TY_INT` | int 型（size = 8）|
 | `TY_PTR` | ポインタ型（`base` が指す型へのポインタ、size = 8）|
 | `TY_FUNC` | 関数型 |
@@ -362,7 +385,7 @@ codegen(Obj *prog)
 
 | 関数 | 役割 |
 |---|---|
-| `is_integer` | `TY_INT` かどうか確認 |
+| `is_integer` | `TY_CHAR` または `TY_INT` かどうか確認 |
 | `pointer_to(base)` | `base` へのポインタ型を生成（size = 8） |
 | `func_type(return_ty)` | 関数型を生成 |
 | `array_of(base, len)` | `base` 型の要素を `len` 個持つ配列型を生成（size = base->size * len） |
