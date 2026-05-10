@@ -23,6 +23,7 @@ tokenize.c          parse.c                    codegen.c
 | `TK_IDENT` | 識別子（変数名・関数名） | `main`, `foo` |
 | `TK_PUNCT` | 記号・演算子 | `+`, `(`, `==` |
 | `TK_KEYWORD` | キーワード | `return`, `if`, `else`, `for`, `while` |
+| `TK_STR` | 文字列リテラル | `"abc"`, `""` |
 | `TK_NUM` | 整数リテラル | `42`, `0` |
 | `TK_EOF` | 入力の終端 | |
 
@@ -104,6 +105,9 @@ AST のノードを生成するヘルパー群。
 | `new_var` | `Obj` を生成する基底関数（リストへの追加はしない） |
 | `new_lvar` | 新しいローカル変数を `locals` リストの先頭に追加 |
 | `new_gvar` | 新しいグローバル変数・関数を `globals` リストの先頭に追加 |
+| `new_unique_name` | `.L..0`, `.L..1` ... のような一意な名前を生成する |
+| `new_anon_gvar` | 一意な名前で匿名グローバル変数を生成する |
+| `new_string_literal` | 文字列リテラル用の匿名グローバル変数を生成し `init_data` をセットする |
 | `consume_ident` | 識別子トークンなら読み進めてそのトークンを返す |
 | `find_var` | `locals` → `globals` の順に線形探索して変数を返す |
 
@@ -195,7 +199,16 @@ assign        ← 最低優先（= による代入）
 1. `(` → 括弧式
 2. `sizeof` → オペランドを `unary` で取得して型を確定させ、`ty->size` を持つ `ND_NUM` ノードを返す（オペランド自体はASTに組み込まず捨てる）
 3. 識別子 → 関数呼び出し (`funcall`) または変数参照
-4. 数値リテラル
+4. 文字列リテラル → `new_string_literal` で匿名グローバル変数を生成し `ND_VAR` ノードを返す
+5. 数値リテラル
+
+```
+primary = "(" expr ")"
+        | sizeof unary
+        | ident func-args?
+        | str
+        | num
+```
 
 `sizeof` はコンパイル時定数なので、コード生成の変更は不要。`sizeof(x=2)` のようにオペランドに副作用がある式を書いても実行されない。
 
@@ -360,7 +373,21 @@ codegen(Obj *prog)
 各関数の `locals` リストを走査し、`var->offset` を `ty->size` の累積値として設定する。`stack_size` は `align_to(offset, 16)` で16バイトアライン（x86-64 ABI要件）。
 
 #### emit_data
-`is_function = false` の `Obj`（グローバル変数）を `.data` セクションに出力する。初期値なしのグローバル変数は `.zero <size>` でゼロ初期化。
+`is_function = false` の `Obj`（グローバル変数）を `.data` セクションに出力する。
+
+| 条件 | 出力 | 用途 |
+|---|---|---|
+| `init_data` あり | `.byte <値>` を `size` 回繰り返す | 文字列リテラル |
+| `init_data` なし | `.zero <size>` | 通常のグローバル変数（ゼロ初期化） |
+
+文字列リテラル `"abc"` の場合、`init_data` は `{'a','b','c','\0'}` なので:
+```asm
+.L..0:
+  .byte 97   ; 'a'
+  .byte 98   ; 'b'
+  .byte 99   ; 'c'
+  .byte 0    ; '\0'
+```
 
 #### emit_text
 `is_function = true` の `Obj`（関数）を `.text` セクションに出力する。各関数の前に `.text` を出力することで、`emit_data` 後もコードセクションに正しく切り替わる。
@@ -393,6 +420,46 @@ codegen(Obj *prog)
 
 ---
 
+## tokenize.c 解説
+
+ソース文字列を受け取り、`Token` の連結リストに変換する。エントリポイントは `tokenize(char *p)`。
+
+### 主な関数
+
+| 関数 | 役割 |
+|---|---|
+| `new_token` | `Token` を生成してリストに繋ぐ基底関数 |
+| `read_punct` | `==`, `!=`, `<=`, `>=` などの複数文字演算子を判定して長さを返す |
+| `is_keyword` | 識別子がキーワードかどうか確認。該当する場合は `TK_IDENT` → `TK_KEYWORD` に書き換える |
+| `read_string_literal` | `"..."` を読み取り `TK_STR` トークンを生成する |
+| `tokenize` | ソース文字列を先頭から走査して `Token` リストを構築する |
+
+### read_string_literal
+
+`"` が来たときに呼ばれる。対応する閉じ `"` を探してトークンを生成する。
+
+```c
+Token *read_string_literal(char *start, Token *cur) {
+    char *p = start + 1;              // 開き " の次から
+    for (; *p != '"'; p++) {
+        if (*p == '\n' || *p == '\0') // 閉じ " なしはエラー
+            error_at(start, "unclosed string literal");
+    }
+    Token *token = new_token(TK_STR, cur, start, p + 1 - start);
+    token->ty  = array_of(ty_char, p - start);  // 長さ = 内容バイト数 + 1 (ヌル終端)
+    token->str = strndup(start + 1, p - start - 1); // 引用符を除いた内容
+    return token;
+}
+```
+
+| フィールド | 値の意味 |
+|---|---|
+| `len` | `p + 1 - start` = `"` から閉じ `"` までの全体長（引用符込み） |
+| `ty` | `array_of(ty_char, p - start)` = 内容の文字数 + ヌル終端（`sizeof("abc") == 4`） |
+| `str` | `strndup(start+1, p-start-1)` = 引用符を除いた中身のみをコピーした文字列 |
+
+---
+
 ## 主要な構造体
 
 ### Token 型
@@ -401,11 +468,13 @@ codegen(Obj *prog)
 
 ```c
 struct Token {
-  TokenKind kind; // トークンの種類（TK_IDENT / TK_PUNCT / TK_KEYWORD / TK_NUM / TK_EOF）
+  TokenKind kind; // トークンの種類（TK_IDENT / TK_PUNCT / TK_KEYWORD / TK_STR / TK_NUM / TK_EOF）
   Token *next;    // 次のトークンへのポインタ（単方向連結リスト）
   int val;        // TK_NUM のときのみ有効な整数値
   char *loc;      // ソース文字列内でのトークン開始位置（元の文字列へのポインタ）
   int len;        // トークンの文字数
+  Type *ty;       // TK_STR のときのみ有効。文字列リテラルの型（array_of(ty_char, len)）
+  char *str;      // TK_STR のときのみ有効。文字列リテラルの内容（ヌル終端）
 };
 ```
 
@@ -416,6 +485,10 @@ struct Token {
 | `val` | 数値リテラルの値。`TK_NUM` 以外では未使用 |
 | `loc` | ソース文字列中の位置。エラーメッセージ（`error_tok`）でどこに問題があるか示すために使う |
 | `len` | `loc` から何バイトがこのトークンかを示す。`equal()` での文字列比較に使う |
+| `ty` | `TK_STR` のときの型情報。`array_of(ty_char, 文字数+1)` が入る（`+1` はヌル終端分） |
+| `str` | `TK_STR` のときの文字列内容。引用符を除いた部分を `strndup` でコピーしたもの |
+
+`Token` は `kind` によって使われるフィールドが変わる設計。`val`（`TK_NUM` 用）と `ty`/`str`（`TK_STR` 用）が共存している。
 
 ---
 
@@ -497,3 +570,48 @@ int **pp      → TY_PTR { size=8, base → TY_PTR { size=8, base → TY_INT { s
 ```
 
 `add_type` は `new_add` / `new_sub` など型に依存する演算の前に呼ぶ必要がある。
+
+---
+
+### Obj 型
+
+**用途**: ローカル変数・グローバル変数・関数を統一的に表す構造体。`is_local` / `is_function` フラグで種別を区別する。
+
+```c
+struct Obj {
+  Obj *next;        // 次の変数/関数（連結リスト）
+  char *name;       // 変数名または関数名
+  Type *ty;         // 型情報
+  bool is_local;    // true = ローカル変数、false = グローバル変数/関数
+
+  bool is_function; // true = 関数、false = 変数
+
+  // グローバル変数用
+  char *init_data;  // 初期値データへのポインタ（文字列リテラルで使用、なければ NULL）
+
+  // 関数用
+  Obj *params;      // 引数リスト（Obj の連結リスト）
+  Node *body;       // 関数本体（compound_stmt の結果）
+  Obj *locals;      // 関数内のローカル変数リスト
+  int stack_size;   // 必要なスタックサイズ（16バイトアライン済み）
+
+  // ローカル変数用
+  int offset;       // rbp からのバイトオフセット（`[rbp - offset]` で参照）
+};
+```
+
+| フィールド | 説明 |
+|---|---|
+| `is_local` | ローカル変数なら `true`。`gen_addr` がアドレス計算方法を切り替えるために使う |
+| `is_function` | 関数なら `true`。`emit_data` / `emit_text` の振り分けに使う |
+| `init_data` | グローバル変数の初期値バイト列。文字列リテラル用の匿名グローバル変数では `token->str` が入る。`NULL` なら `.zero` で出力 |
+| `offset` | ローカル変数の `rbp` からのオフセット。`gen_addr` で `lea rax, [rbp - offset]` として使う |
+
+#### 文字列リテラルと init_data の関係
+
+```
+"abc"  →  TK_STR トークン（str="abc", ty=array_of(ty_char, 4)）
+        →  new_string_literal() で匿名グローバル変数を生成
+        →  var->init_data = "abc\0"（4バイト）
+        →  emit_data() で .byte 97 / .byte 98 / .byte 99 / .byte 0 を出力
+```
