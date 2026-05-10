@@ -105,7 +105,7 @@ AST のノードを生成するヘルパー群。
 | `new_var` | `Obj` を生成する基底関数（リストへの追加はしない） |
 | `new_lvar` | 新しいローカル変数を `locals` リストの先頭に追加 |
 | `new_gvar` | 新しいグローバル変数・関数を `globals` リストの先頭に追加 |
-| `new_unique_name` | `.L..0`, `.L..1` ... のような一意な名前を生成する |
+| `new_unique_name` | `format()` を使い `.L..0`, `.L..1` ... のような一意な名前を生成する |
 | `new_anon_gvar` | 一意な名前で匿名グローバル変数を生成する |
 | `new_string_literal` | 文字列リテラル用の匿名グローバル変数を生成し `init_data` をセットする |
 | `consume_ident` | 識別子トークンなら読み進めてそのトークンを返す |
@@ -420,6 +420,34 @@ codegen(Obj *prog)
 
 ---
 
+## strings.c 解説
+
+フォーマット文字列を受け取り、ヒープに確保した文字列を返すユーティリティ関数。
+
+### format()
+
+`printf` スタイルのフォーマット文字列を受け取り、整形済み文字列を返す。  
+`open_memstream` を使うことでバッファサイズを事前に決める必要がなく、任意長の文字列を安全に生成できる。
+
+```c
+char *format(char *fmt, ...) {
+  char *buf;
+  size_t buflen;
+  FILE *out = open_memstream(&buf, &buflen); // 動的バッファに書き込むストリームを開く
+
+  va_list ap;
+  va_start(ap, fmt);
+  vfprintf(out, fmt, ap);
+  va_end(ap);
+  fclose(out); // fclose 時に buf が確定しヌル終端される
+  return buf;  // 呼び出し元が所有権を持つ（free が必要）
+}
+```
+
+`calloc(1, 20) + sprintf` のような固定サイズバッファを不要にし、`new_unique_name()` などから利用される。
+
+---
+
 ## tokenize.c 解説
 
 ソース文字列を受け取り、`Token` の連結リストに変換する。エントリポイントは `tokenize(char *p)`。
@@ -431,32 +459,79 @@ codegen(Obj *prog)
 | `new_token` | `Token` を生成してリストに繋ぐ基底関数 |
 | `read_punct` | `==`, `!=`, `<=`, `>=` などの複数文字演算子を判定して長さを返す |
 | `is_keyword` | 識別子がキーワードかどうか確認。該当する場合は `TK_IDENT` → `TK_KEYWORD` に書き換える |
-| `read_string_literal` | `"..."` を読み取り `TK_STR` トークンを生成する |
+| `read_escaped_char` | `\n`, `\t` などのエスケープ文字を対応するASCII値に変換する |
+| `string_literal_end` | 閉じ `"` の位置を返す（`\"` はスキップ） |
+| `read_string_literal` | `"..."` を読み取りエスケープ処理済みの `TK_STR` トークンを生成する |
 | `tokenize` | ソース文字列を先頭から走査して `Token` リストを構築する |
+
+### read_escaped_char
+
+`\` の直後の文字を受け取り、対応するASCII値を返す。
+
+```c
+int read_escaped_char(char *p) {
+  switch (*p) {
+  case 'a': return '\a';  // 7  : ベル
+  case 'b': return '\b';  // 8  : バックスペース
+  case 't': return '\t';  // 9  : タブ
+  case 'n': return '\n';  // 10 : 改行
+  case 'v': return '\v';  // 11 : 垂直タブ
+  case 'f': return '\f';  // 12 : フォームフィード
+  case 'r': return '\r';  // 13 : キャリッジリターン
+  case 'e': return 27;    // 27 : ESC（GNU拡張）
+  default:  return *p;    // 未知のエスケープはそのまま返す（例: \j → 'j'）
+  }
+}
+```
+
+### string_literal_end
+
+閉じ `"` の位置を探す。`\` が来たら1文字読み飛ばすことでエスケープされた `\"` を誤検出しない。
+
+```c
+char *string_literal_end(char *p) {
+  char *start = p;
+  for (; *p != '"'; p++) {
+    if (*p == '\n' || *p == '\0')
+      error_at(start, "unclosed string literal");
+    if (*p == '\\')
+      p++; // エスケープ文字の次の1文字をスキップ
+  }
+  return p;
+}
+```
 
 ### read_string_literal
 
-`"` が来たときに呼ばれる。対応する閉じ `"` を探してトークンを生成する。
+`"` が来たときに呼ばれる。`string_literal_end` で終端を求めた後、エスケープ処理しながら1バイトずつデコードして `buf` に積む。
 
 ```c
 Token *read_string_literal(char *start, Token *cur) {
-    char *p = start + 1;              // 開き " の次から
-    for (; *p != '"'; p++) {
-        if (*p == '\n' || *p == '\0') // 閉じ " なしはエラー
-            error_at(start, "unclosed string literal");
+  char *end = string_literal_end(start + 1);
+  char *buf = calloc(1, end - start); // ソース長以下のバッファで足りる
+  int len = 0;
+
+  for (char *p = start + 1; p < end;) {
+    if (*p == '\\') {
+      buf[len++] = read_escaped_char(p + 1); // \ の次の文字を変換
+      p += 2;
+    } else {
+      buf[len++] = *p++;
     }
-    Token *token = new_token(TK_STR, cur, start, p + 1 - start);
-    token->ty  = array_of(ty_char, p - start);  // 長さ = 内容バイト数 + 1 (ヌル終端)
-    token->str = strndup(start + 1, p - start - 1); // 引用符を除いた内容
-    return token;
+  }
+
+  Token *token = new_token(TK_STR, cur, start, end + 1 - start);
+  token->ty  = array_of(ty_char, len + 1); // デコード後の長さ + ヌル終端
+  token->str = buf;
+  return token;
 }
 ```
 
 | フィールド | 値の意味 |
 |---|---|
-| `len` | `p + 1 - start` = `"` から閉じ `"` までの全体長（引用符込み） |
-| `ty` | `array_of(ty_char, p - start)` = 内容の文字数 + ヌル終端（`sizeof("abc") == 4`） |
-| `str` | `strndup(start+1, p-start-1)` = 引用符を除いた中身のみをコピーした文字列 |
+| `len`（Token） | `end + 1 - start` = ソース上の `"..."` 全体の文字数（引用符込み） |
+| `ty` | `array_of(ty_char, len + 1)` = **デコード後**の文字数 + ヌル終端（`sizeof("\n") == 2`） |
+| `str` | エスケープ処理済みのバイト列（ヌル終端なし。`token->ty->size - 1` バイト有効） |
 
 ---
 
