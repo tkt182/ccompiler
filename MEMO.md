@@ -459,17 +459,33 @@ char *format(char *fmt, ...) {
 | `new_token` | `Token` を生成してリストに繋ぐ基底関数 |
 | `read_punct` | `==`, `!=`, `<=`, `>=` などの複数文字演算子を判定して長さを返す |
 | `is_keyword` | 識別子がキーワードかどうか確認。該当する場合は `TK_IDENT` → `TK_KEYWORD` に書き換える |
-| `read_escaped_char` | `\n`, `\t` などのエスケープ文字を対応するASCII値に変換する |
+| `read_escaped_char` | `\n`, `\t` などのエスケープ文字、および `\0`, `\101` などの8進数エスケープを対応するASCII値に変換する |
 | `string_literal_end` | 閉じ `"` の位置を返す（`\"` はスキップ） |
 | `read_string_literal` | `"..."` を読み取りエスケープ処理済みの `TK_STR` トークンを生成する |
 | `tokenize` | ソース文字列を先頭から走査して `Token` リストを構築する |
 
 ### read_escaped_char
 
-`\` の直後の文字を受け取り、対応するASCII値を返す。
+`\` の直後の文字を受け取り、対応するASCII値を返す。読み終えた次の位置を `*new_pos` に書き込む。
+
+8進数エスケープ（`0`〜`7` で始まる）は**可変長**（1〜3桁）のため、何文字消費したかを呼び出し元に伝える必要がある。そのため引数に `char **new_pos` を追加し、名前付きエスケープも含めて統一的に次の位置を返す設計になっている。
 
 ```c
-int read_escaped_char(char *p) {
+int read_escaped_char(char **new_pos, char *p) {
+  if ('0' <= *p && *p <= '7') {
+    // 8進数エスケープ（最大3桁）
+    int c = *p++ - '0';
+    if ('0' <= *p && *p <= '7') {
+      c = (c << 3) + (*p++ - '0');
+      if ('0' <= *p && *p <= '7')
+        c = (c << 3) + (*p++ - '0');
+    }
+    *new_pos = p;
+    return c;
+  }
+
+  *new_pos = p + 1;
+
   switch (*p) {
   case 'a': return '\a';  // 7  : ベル
   case 'b': return '\b';  // 8  : バックスペース
@@ -483,6 +499,15 @@ int read_escaped_char(char *p) {
   }
 }
 ```
+
+8進数エスケープの例：
+
+| リテラル | 解釈 | 値 |
+|---|---|---|
+| `"\0"` | 8進数 0 | 0（NUL） |
+| `"\20"` | 8進数 20 | 16 |
+| `"\101"` | 8進数 101 | 65（= `'A'`） |
+| `"\1500"` | 8進数 150（3桁まで） + `'0'` | 104 と 48 の2文字 |
 
 ### string_literal_end
 
@@ -513,8 +538,7 @@ Token *read_string_literal(char *start, Token *cur) {
 
   for (char *p = start + 1; p < end;) {
     if (*p == '\\') {
-      buf[len++] = read_escaped_char(p + 1); // \ の次の文字を変換
-      p += 2;
+      buf[len++] = read_escaped_char(&p, p + 1); // \ の次の文字を変換。p は消費分だけ進む
     } else {
       buf[len++] = *p++;
     }
