@@ -499,12 +499,21 @@ Node *funcall(Token **rest, Token *token) {
   return node;
 }
 
-// primary = "(" expr ")"
+// primary = "(" "{" stmt+ "}" ")"
+//            | "(" expr ")"
 //            | sizeof unary
 //            | ident func-args?
 //            | str
 //            | num
 Node *primary(Token **rest, Token *token) {
+  if (equal(token, "(") && equal(token->next, "{")) {
+    // This is a GNU statement expresssion.
+    Node *node = new_node(ND_STMT_EXPR, token);
+    node->body = compound_stmt(&token, token->next->next)->body;
+    *rest = skip(token, ")");
+    return node;
+  }
+
   // "(" expr ")"
   if (consume(&token, "(", token)) {
     Node *node = expr(&token, token);
@@ -702,9 +711,12 @@ mul        = unary ("*" unary | "/" unary)*
 unary      = ("+" | "-" | "*" | "&") unary
            | postfix
 postfix    = primary ("[" expr "]")*
-primary    = ident
-              | "(" (assign ("," assign)*)? ")"
-              | num
+primary    = "(" "{" stmt+ "}" ")"
+           | "(" expr ")"
+           | "sizeof" unary
+           | ident func-args?
+           | str
+           | num
 */
 
 Obj *parse(Token *token) {

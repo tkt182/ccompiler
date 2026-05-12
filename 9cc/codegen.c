@@ -7,6 +7,7 @@ static char *argreg64[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
 Obj *current_fn;
 
 void gen_expr(Node *node);
+void gen_stmt(Node *node);
 
 void push(void) {
   printf("  push rax\n");
@@ -88,6 +89,11 @@ void gen_expr(Node *node) {
     push();
     gen_expr(node->rhs); // 右辺の値をraxにセット
     store(node->ty);
+    return;
+  case ND_STMT_EXPR:
+    for (Node *n = node->body; n; n = n->next) {
+      gen_stmt(n);
+    }
     return;
   case ND_FUNCALL:
     int nargs = 0;

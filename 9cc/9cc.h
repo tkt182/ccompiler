@@ -98,6 +98,7 @@ typedef enum {
   ND_BLOCK,     // { ... }
   ND_FUNCALL,   // 関数呼び出し
   ND_EXPR_STMT,  // 式文
+  ND_STMT_EXPR,  // 文式 GNU Cの拡張機能
   ND_NULL_STMT, // 空文
 } NodeKind;
 
@@ -120,7 +121,7 @@ struct Node {
   Node *els;      // if文の偽のときの式
   Node *init;     // for文の初期化式
   Node *inc;      // for文の増分
-  Node *body;     // ブロックの中身
+  Node *body;     // ブロックの中身 or 文式(GNU Cの文式)の中身
   char *funcname; // 関数呼び出しの関数名
   Node *args;     // 関数呼び出しの引数
   int val;        // kindがND_NUMの場合のみ使う
