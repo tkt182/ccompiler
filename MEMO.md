@@ -49,6 +49,7 @@ tokenize.c          parse.c                    codegen.c
 | `ND_LT` | 未満 (`<`) | `lhs`, `rhs` |
 | `ND_LE` | 以下 (`<=`) | `lhs`, `rhs` |
 | `ND_FUNCALL` | 関数呼び出し | `funcname`, `args` |
+| `ND_STMT_EXPR` | 文式 `({ ... })` (GNU C拡張) | `body` |
 
 ### 文ノード
 | 種類 | 説明 | 使用フィールド |
@@ -196,14 +197,16 @@ assign        ← 最低優先（= による代入）
 
 #### primary
 式の末端（葉ノード）を処理する:
-1. `(` → 括弧式
-2. `sizeof` → オペランドを `unary` で取得して型を確定させ、`ty->size` を持つ `ND_NUM` ノードを返す（オペランド自体はASTに組み込まず捨てる）
-3. 識別子 → 関数呼び出し (`funcall`) または変数参照
-4. 文字列リテラル → `new_string_literal` で匿名グローバル変数を生成し `ND_VAR` ノードを返す
-5. 数値リテラル
+1. `( {` → **文式**（GNU C拡張）: `compound_stmt` でブロックをパースし `ND_STMT_EXPR` ノードを返す
+2. `(` → 括弧式
+3. `sizeof` → オペランドを `unary` で取得して型を確定させ、`ty->size` を持つ `ND_NUM` ノードを返す（オペランド自体はASTに組み込まず捨てる）
+4. 識別子 → 関数呼び出し (`funcall`) または変数参照
+5. 文字列リテラル → `new_string_literal` で匿名グローバル変数を生成し `ND_VAR` ノードを返す
+6. 数値リテラル
 
 ```
-primary = "(" expr ")"
+primary = "(" "{" stmt+ "}" ")"
+        | "(" expr ")"
         | sizeof unary
         | ident func-args?
         | str
@@ -211,6 +214,12 @@ primary = "(" expr ")"
 ```
 
 `sizeof` はコンパイル時定数なので、コード生成の変更は不要。`sizeof(x=2)` のようにオペランドに副作用がある式を書いても実行されない。
+
+文式 `({ stmt... })` はブロックの最後の式の値が文式全体の値になる（GNU C拡張）。
+
+```c
+int x = ({ int a = 1; int b = 2; a + b; }); // x == 3
+```
 
 ---
 
@@ -300,6 +309,7 @@ add rax, rdi   → rax = lhs + rhs
 | `ND_DEREF` | lhs を評価（ポインタ値を rax に）→ `load` でデリファレンス |
 | `ND_ADDR` | `gen_addr(lhs)` でアドレスだけを rax に返す（デリファレンスしない） |
 | `ND_ASSIGN` | `gen_addr(lhs)` でアドレスを push で退避 → rhs を評価 → `store` で書き込み |
+| `ND_STMT_EXPR` | `body` の各ノードを順に `gen_stmt`（最後の `ND_EXPR_STMT` の結果が `rax` に残る） |
 | `ND_FUNCALL` | 各引数を `gen_expr` + `push rax` で積む → 逆順に `pop argreg64` して引数レジスタへ → `call` |
 | 二項演算 | rhs → push → lhs → pop(rdi) → 演算（結果は rax）|
 
@@ -417,6 +427,21 @@ codegen(Obj *prog)
 | `func_type(return_ty)` | 関数型を生成 |
 | `array_of(base, len)` | `base` 型の要素を `len` 個持つ配列型を生成（size = base->size * len） |
 | `add_type(node)` | AST を再帰的に走査して各ノードに型をセット |
+
+#### ND_STMT_EXPR の型推論
+
+`body` の連結リストを末尾まで走査し、最後のノードが `ND_EXPR_STMT` であればその `lhs->ty` を文式全体の型とする。最後のノードが `ND_EXPR_STMT` でない場合（void を返す場合）はコンパイルエラー。
+
+```c
+// body リストの末尾を探す
+Node *stmt = node->body;
+while (stmt->next) stmt = stmt->next;
+// 最後が式文なら型を継承
+if (stmt->kind == ND_EXPR_STMT)
+  node->ty = stmt->lhs->ty;
+else
+  error_tok(node->tok, "statement expression returning void is not supported");
+```
 
 ---
 
@@ -647,7 +672,7 @@ struct Node {
   Node *els;      // if の else 節（なければ NULL）
   Node *init;     // for の初期化式（なければ NULL）
   Node *inc;      // for の増分式（なければ NULL）
-  Node *body;     // ND_BLOCK の中身（文の連結リスト）
+  Node *body;     // ND_BLOCK の中身（文の連結リスト）または ND_STMT_EXPR の中身（GNU C文式）
   char *funcname; // ND_FUNCALL の関数名
   Node *args;     // ND_FUNCALL の引数リスト（next で連結）
   int val;        // ND_NUM のときのみ有効な整数値
