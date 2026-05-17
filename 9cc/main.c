@@ -7,7 +7,7 @@ int main(int argc, char **argv) {
   }
 
   // tokenize and parse
-  Token *token = tokenize(argv[1]);
+  Token *token = tokenize_file(argv[1]);
   Obj *prog = parse(token);
 
   codegen(prog);

@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include <assert.h>
 #include <ctype.h>
+#include <errno.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -46,7 +47,7 @@ void error(char *fmt, ...);
 void error_at(char *loc, char *fmt, ...);
 void error_tok(Token *tok, char *fmt, ...);
 Token *skip(Token *token, char *op);
-Token *tokenize(char *input);
+Token *tokenize_file(char *filename);
 
 //
 // parse.c

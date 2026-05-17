@@ -2,12 +2,48 @@
 
 // Input string
 static char *current_input;
+static char *current_filename;
 
 // エラーを報告するための関数
 // printfと同じ引数を取る
 void error(char *fmt, ...) {
   va_list ap;     // va_listは可変長引数を扱うchar型のポインタ
   va_start(ap, fmt);
+  vfprintf(stderr, fmt, ap);
+  fprintf(stderr, "\n");
+  exit(1);
+}
+
+// Reports an error message in the following format and exit.
+void verror_at(char *loc, char *fmt, va_list ap) {
+  // Find a line containing `loc`.
+  char *line = loc;
+  while (current_input < line && line[-1] != '\n') {
+    line--;
+  }
+
+  char *end = loc;
+  while (*end != '\n') {
+    end++;
+  }
+
+  // Get a line number.
+  int line_no = 1;
+  for (char *p = current_input; p < line; p++) {
+    if (*p == '\n') {
+      line_no++;
+    }
+  }
+
+  // Print out the line.
+  int indent = fprintf(stderr, "%s:%d: ", current_filename, line_no);
+  fprintf(stderr, "%.*s\n", (int)(end - line), line);
+
+  // Show the error message.
+  int pos = loc - line + indent;
+
+  fprintf(stderr, "%*s", pos, ""); // print pos spaces.
+  fprintf(stderr, "^ ");
   vfprintf(stderr, fmt, ap);
   fprintf(stderr, "\n");
   exit(1);
@@ -164,7 +200,8 @@ Token *read_string_literal(char *start, Token *cur) {
 }
 
 // 入力文字列pをトークナイズしてそれを返す
-Token *tokenize(char *p) {
+Token *tokenize(char *filename, char *p) {
+  current_filename = filename;
   current_input = p;
   Token head;
   head.next = NULL;
@@ -218,4 +255,50 @@ Token *tokenize(char *p) {
 
   new_token(TK_EOF, cur, p, 0);
   return head.next;
+}
+
+
+char *read_file(char *path) {
+  FILE *fp;
+
+  if (strcmp(path, "-") == 0) {
+    // By convention, read from stdin if a given filename is "-".
+    fp = stdin;
+  } else {
+    fp = fopen(path, "r");
+    if (!fp) {
+      error("cannot open %s: %s", path, strerror(errno));
+    }
+  }
+
+  char *buf;
+  size_t buflen;
+  FILE *out = open_memstream(&buf, &buflen);
+
+  // Read the entire file.
+  for (;;) {
+    char buf2[4096];
+    int n = fread(buf2, 1, sizeof(buf2), fp);
+    if (n == 0) {
+      break;
+    }
+    fwrite(buf2, 1, n, out);
+  }
+
+  if (fp != stdin) {
+    fclose(fp);
+  }
+
+  // Make sure that the last line is properly terminated with '\n'.
+  fflush(out);
+  if (buflen == 0 || buf[buflen - 1] != '\n') {
+    fputc('\n', out);
+  }
+  fputc('\0', out);
+  fclose(out);
+  return buf;
+}
+
+Token *tokenize_file(char *path) {
+  return tokenize(path, read_file(path));
 }
