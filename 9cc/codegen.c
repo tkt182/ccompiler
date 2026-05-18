@@ -9,13 +9,21 @@ Obj *current_fn;
 void gen_expr(Node *node);
 void gen_stmt(Node *node);
 
+void println(char *fmt, ...) {
+  va_list ap;
+  va_start(ap, fmt);
+  vprintf(fmt, ap);
+  va_end(ap);
+  printf("\n");
+}
+
 void push(void) {
-  printf("  push rax\n");
+  println("  push rax\n");
   label_count++;
 }
 
 void pop(char *arg) {
-  printf("  pop %s\n", arg);
+  println("  pop %s\n", arg);
   label_count--;
 }
 
@@ -27,9 +35,9 @@ void gen_addr(Node *node) {
   switch (node->kind) {
   case ND_VAR:
     if (node->var->is_local) {
-      printf("  lea rax, [rbp - %d]\n", node->var->offset);
+      println("  lea rax, [rbp - %d]\n", node->var->offset);
     } else {
-      printf("  lea rax, [rip + %s]\n", node->var->name);
+      println("  lea rax, [rip + %s]\n", node->var->name);
     }
     return;
   case ND_DEREF:
@@ -47,9 +55,9 @@ void load(Type *ty) {
   }
   // メモリ -> rax(読み込み)
   if (ty->size == 1) {
-    printf("  movzx rax, byte ptr [rax]\n");
+    println("  movzx rax, byte ptr [rax]\n");
   } else {
-    printf("  mov rax, [rax]\n");
+    println("  mov rax, [rax]\n");
   }
 }
 
@@ -57,21 +65,21 @@ void store(Type *ty) {
   pop("rdi");
 
   if (ty->size == 1) {
-    printf("  mov [rdi], al\n");
+    println("  mov [rdi], al\n");
   } else {
-    printf("  mov [rdi], rax\n");
+    println("  mov [rdi], rax\n");
   }
 }
 
 void gen_expr(Node *node) {
   switch (node->kind) {
   case ND_NUM:
-    printf("  mov rax, %d\n", node->val);
+    println("  mov rax, %d\n", node->val);
     return;
   case ND_NEG:
     // 単項マイナス: lhs を評価してから neg 命令で符号反転
     gen_expr(node->lhs);
-    printf("  neg rax\n");
+    println("  neg rax\n");
     return;
   case ND_VAR:
     gen_addr(node);
@@ -107,8 +115,8 @@ void gen_expr(Node *node) {
     for(int i = nargs - 1; i >= 0; i--) {
       pop(argreg64[i]);
     }
-    printf("  mov rax, 0\n");
-    printf("  call %s\n", node->funcname);
+    println("  mov rax, 0\n");
+    println("  call %s\n", node->funcname);
     return;
   }
 
@@ -119,37 +127,37 @@ void gen_expr(Node *node) {
 
   switch (node->kind) {
   case ND_ADD:
-    printf("  add rax, rdi\n");
+    println("  add rax, rdi\n");
     break;
   case ND_SUB:
-    printf("  sub rax, rdi\n");
+    println("  sub rax, rdi\n");
     break;
   case ND_MUL:
-    printf("  imul rax, rdi\n");
+    println("  imul rax, rdi\n");
     break;
   case ND_DIV:
-    printf("  cqo\n");
-    printf("  idiv rdi\n");
+    println("  cqo\n");
+    println("  idiv rdi\n");
     break;
   case ND_EQ:
-    printf("  cmp rax, rdi\n");
-    printf("  sete al\n");
-    printf("  movzb rax, al\n");
+    println("  cmp rax, rdi\n");
+    println("  sete al\n");
+    println("  movzb rax, al\n");
     break;
   case ND_NE:
-    printf("  cmp rax, rdi\n");
-    printf("  setne al\n");
-    printf("  movzb rax, al\n");
+    println("  cmp rax, rdi\n");
+    println("  setne al\n");
+    println("  movzb rax, al\n");
     break;
   case ND_LT:
-    printf("  cmp rax, rdi\n");
-    printf("  setl al\n");
-    printf("  movzb rax, al\n");
+    println("  cmp rax, rdi\n");
+    println("  setl al\n");
+    println("  movzb rax, al\n");
     break;
   case ND_LE:
-    printf("  cmp rax, rdi\n");
-    printf("  setle al\n");
-    printf("  movzb rax, al\n");
+    println("  cmp rax, rdi\n");
+    println("  setle al\n");
+    println("  movzb rax, al\n");
     break;
   }
 }
@@ -171,35 +179,35 @@ void gen_stmt(Node *node) {
     int c = label_count++;
     // 条件式を評価してスタックにpush
     gen_expr(node->cond);
-    printf("  cmp rax, 0\n");
+    println("  cmp rax, 0\n");
     if (node->els) {
-      printf("  je .L.else.%d\n", c);
+      println("  je .L.else.%d\n", c);
       gen_stmt(node->then);
-      printf("  jmp .L.end.%d\n", c);
-      printf(".L.else.%d:\n", c);
+      println("  jmp .L.end.%d\n", c);
+      println(".L.else.%d:\n", c);
       gen_stmt(node->els);
     } else {
-      printf("  je .L.end.%d\n", c);
+      println("  je .L.end.%d\n", c);
       gen_stmt(node->then);
     }
-    printf(".L.end.%d:\n", c);
+    println(".L.end.%d:\n", c);
     return;
 
   case ND_FOR:
     c = label_count++;
     if (node->init)
       gen_stmt(node->init);
-    printf(".L.begin.%d:\n", c);
+    println(".L.begin.%d:\n", c);
     if (node->cond) {
       gen_expr(node->cond);
-      printf("  cmp rax, 0\n");
-      printf("  je .L.end.%d\n", c);
+      println("  cmp rax, 0\n");
+      println("  je .L.end.%d\n", c);
     }
     gen_stmt(node->then);
     if (node->inc)
       gen_expr(node->inc);
-    printf("  jmp .L.begin.%d\n", c);
-    printf(".L.end.%d:\n", c);
+    println("  jmp .L.begin.%d\n", c);
+    println(".L.end.%d:\n", c);
     return;
 
   case ND_RETURN:
@@ -208,7 +216,7 @@ void gen_stmt(Node *node) {
     gen_expr(node->lhs);
     // 関数末尾の共通エピローグへジャンプ
     // エピローグをインラインで重複生成せず、ラベルにjmpする
-    printf("  jmp .L.return.%s\n", current_fn->name);
+    println("  jmp .L.return.%s\n", current_fn->name);
     return;
   case ND_EXPR_STMT:
     gen_expr(node->lhs);
@@ -239,15 +247,15 @@ void emit_data(Obj *prog) {
       continue;
     }
 
-    printf("  .data\n");
-    printf("  .globl %s\n", var->name);
-    printf("%s:\n", var->name);
+    println("  .data\n");
+    println("  .globl %s\n", var->name);
+    println("%s:\n", var->name);
     if (var->init_data) {
       for (int i = 0; i < var->ty->size; i++) {
-        printf("  .byte %d\n", var->init_data[i]);
+        println("  .byte %d\n", var->init_data[i]);
       }
     } else {
-      printf("  .zero %d\n", var->ty->size);
+      println("  .zero %d\n", var->ty->size);
     }
   }
 }
@@ -258,38 +266,38 @@ void emit_text(Obj *prog) {
       continue;
     }
 
-    printf("  .globl %s\n", fn->name);
-    printf("  .text\n");
-    printf("%s:\n", fn->name);
+    println("  .globl %s\n", fn->name);
+    println("  .text\n");
+    println("%s:\n", fn->name);
     current_fn = fn;
 
     // プロローグ
-    printf("  push rbp\n");
-    printf("  mov rbp, rsp\n");
-    printf("  sub rsp, %d\n", fn->stack_size);
+    println("  push rbp\n");
+    println("  mov rbp, rsp\n");
+    println("  sub rsp, %d\n", fn->stack_size);
 
     // 引数をスタックにpush
     int i = 0;
     for (Obj *var = fn->params; var; var = var->next) {
       if (var->ty->size == 1) {
-        printf("  mov [rbp - %d], %s\n", var->offset, argreg8[i++]);
+        println("  mov [rbp - %d], %s\n", var->offset, argreg8[i++]);
       } else {
-        printf("  mov [rbp - %d], %s\n", var->offset, argreg64[i++]);
+        println("  mov [rbp - %d], %s\n", var->offset, argreg64[i++]);
       }
     }
 
     gen_stmt(fn->body);
 
     // エピローグ
-    printf(".L.return.%s:\n", fn->name);
-    printf("  mov rsp, rbp\n");
-    printf("  pop rbp\n");
-    printf("  ret\n");
+    println(".L.return.%s:\n", fn->name);
+    println("  mov rsp, rbp\n");
+    println("  pop rbp\n");
+    println("  ret\n");
   }
 }
 
 void codegen(Obj *prog) {
-  printf(".intel_syntax noprefix\n");
+  println(".intel_syntax noprefix\n");
 
   assign_lvar_offsets(prog);
   emit_data(prog);
