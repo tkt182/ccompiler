@@ -1,5 +1,6 @@
 #include "9cc.h"
 
+static FILE *output_file;
 static int label_count = 0;
 // 関数呼び出しの引数を格納するレジスタ
 static char *argreg8[] = {"dil", "sil", "dl", "cl", "r8b", "r9b"};
@@ -12,9 +13,9 @@ void gen_stmt(Node *node);
 void println(char *fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
-  vprintf(fmt, ap);
+  vfprintf(output_file, fmt, ap);
   va_end(ap);
-  printf("\n");
+  fprintf(output_file, "\n");
 }
 
 void push(void) {
@@ -296,7 +297,8 @@ void emit_text(Obj *prog) {
   }
 }
 
-void codegen(Obj *prog) {
+void codegen(Obj *prog, FILE *out) {
+  output_file = out;
   println(".intel_syntax noprefix\n");
 
   assign_lvar_offsets(prog);
