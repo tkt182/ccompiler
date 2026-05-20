@@ -1,5 +1,20 @@
 #include "9cc.h"
 
+// Scope for local or global variables.
+typedef struct VarScope VarScope;
+struct VarScope {
+  VarScope *next;
+  char *name;
+  Obj *var;
+};
+
+// Represents a block scope.
+typedef struct Scope Scope;
+struct Scope {
+  Scope *next;
+  VarScope *vars;
+};
+
 Type *declspec(Token **rest, Token *token);
 Type *declarator(Token **rest, Token *token, Type *ty);
 Node *declaration(Token **rest, Token *token);
@@ -17,6 +32,9 @@ Node *primary(Token **rest, Token *token);
 
 Obj *locals; // ローカル変数リストの先頭
 Obj *globals; // グローバル変数・関数リストの先頭
+
+Scope *scope = &(Scope){};
+
 
 bool equal(Token *token, char *op) {
   return memcmp(token->loc, op, token->len) == 0 && op[token->len] == '\0';
@@ -63,6 +81,15 @@ int expect_number(Token **rest, Token *token) {
 
 bool at_eof(Token *token) {
   return token->kind == TK_EOF;
+}
+
+VarScope *push_scope(char *name, Obj *var) {
+  VarScope *sc = calloc(1, sizeof(VarScope));
+  sc->name = name;
+  sc->var = var;
+  sc->next = scope->vars;
+  scope->vars = sc;
+  return sc;
 }
 
 Node *new_node(NodeKind kind, Token *token) {
@@ -114,6 +141,7 @@ Obj *new_var(char *name, Type *ty) {
   Obj *var = calloc(1, sizeof(Obj));
   var->name = name;
   var->ty = ty;
+  push_scope(name, var);
   return var;
 }
 
@@ -158,20 +186,29 @@ Token *consume_ident(Token **rest, Token *token) {
   return tok;
 }
 
+void enter_scope(void) {
+  Scope *sc = calloc(1, sizeof(Scope));
+  sc->next = scope;
+  scope = sc;
+}
+
+void leave_scope(void) {
+  scope = scope->next;
+}
+
+
 Obj *find_var(Token *token) {
-  for (Obj *var = locals; var; var = var->next) {
-    if (strlen(var->name) == token->len && !strncmp(token->loc, var->name, token->len)) {
-      return var;
+  for (Scope *sc = scope; sc; sc = sc->next) {
+    for (VarScope *sc2 = sc->vars; sc2; sc2 = sc2->next) {
+      if (equal(token, sc2->name)) {
+        return sc2->var;
+      }
     }
   }
 
-  for (Obj *var = globals; var; var = var->next) {
-    if (strlen(var->name) == token->len && !strncmp(token->loc, var->name, token->len)) {
-      return var;
-    }
-  }
   return NULL;
 }
+
 
 // declspec = "char" | "int"
 Type *declspec(Token **rest, Token *token) {
@@ -631,6 +668,8 @@ Node *compound_stmt(Token **rest, Token *token) {
   Node head = {};
   Node *cur = &head;
 
+  enter_scope();
+
   while (!equal(token, "}")) {
     if (is_typename(token)) {
       cur = cur->next = declaration(&token, token);
@@ -639,6 +678,8 @@ Node *compound_stmt(Token **rest, Token *token) {
     }
     add_type(cur);
   }
+
+  leave_scope();
 
   node->body = head.next;
   *rest = token->next; // consume "}"
@@ -659,13 +700,14 @@ Token *function(Token *token, Type *basety) {
   fn->is_function = true;
 
   locals = NULL;
-
+  enter_scope();
   create_param_lvars(ty->params);
   fn->params = locals;
 
   token = skip(token, "{");
   fn->body = compound_stmt(&token, token);
   fn->locals = locals;
+  leave_scope();
   return token;
 }
 
