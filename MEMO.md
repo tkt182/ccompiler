@@ -103,14 +103,17 @@ AST のノードを生成するヘルパー群。
 | 関数 | 役割 |
 |---|---|
 | `get_ident` | トークンが識別子なら名前文字列を返す |
-| `new_var` | `Obj` を生成する基底関数（リストへの追加はしない） |
+| `new_var` | `Obj` を生成する基底関数。`push_scope` を呼んで現在のスコープに変数を登録する |
 | `new_lvar` | 新しいローカル変数を `locals` リストの先頭に追加 |
 | `new_gvar` | 新しいグローバル変数・関数を `globals` リストの先頭に追加 |
 | `new_unique_name` | `format()` を使い `.L..0`, `.L..1` ... のような一意な名前を生成する |
 | `new_anon_gvar` | 一意な名前で匿名グローバル変数を生成する |
 | `new_string_literal` | 文字列リテラル用の匿名グローバル変数を生成し `init_data` をセットする |
 | `consume_ident` | 識別子トークンなら読み進めてそのトークンを返す |
-| `find_var` | `locals` → `globals` の順に線形探索して変数を返す |
+| `push_scope` | 現在のスコープ（`scope->vars`）の先頭に `VarScope` を追加し、名前と `Obj *` を登録する |
+| `enter_scope` | 新しい `Scope` を生成してスタックに積む（ブロック `{` の開始時） |
+| `leave_scope` | `scope = scope->next` でスコープを1段抜ける（ブロック `}` の終了時） |
+| `find_var` | `scope` チェーンを外側に向かって線形探索し、最も内側で一致した変数を返す |
 
 変数のオフセット計算（rbp からのバイト距離）:
 
@@ -237,7 +240,8 @@ int x = ({ int a = 1; int b = 2; a + b; }); // x == 3
 | その他 | `expr_stmt`（式文） | |
 
 `compound_stmt` は `{ stmt* }` を処理し、文を `ND_BLOCK` ノードの `body` に連結リストとして繋ぐ。  
-先頭が型名（`is_typename` で判定）なら `declaration`、それ以外は `stmt` として処理する。各文の処理後に `add_type` を呼んで型情報を付与する。
+先頭が型名（`is_typename` で判定）なら `declaration`、それ以外は `stmt` として処理する。各文の処理後に `add_type` を呼んで型情報を付与する。  
+ブロックの開始・終了時に `enter_scope()` / `leave_scope()` を呼んでスコープを管理する（ブロック内で宣言した変数は外側から見えなくなる）。
 
 ---
 
@@ -256,6 +260,7 @@ parse()
 `declspec` → `declarator` の順に型と関数名をパースし、`compound_stmt` で本体を処理する。
 - `new_gvar` で `globals` に追加し、`is_function = true` をセット
 - `fn->locals` に関数内のローカル変数リストを保存
+- `enter_scope()` で関数スコープを開始し、引数変数を登録した後 `compound_stmt` を呼ぶ。終了後 `leave_scope()`
 - 処理済みの `Token *` を返す（呼び出し元がトークン位置を進めるため）
 
 #### global_variable()
@@ -366,10 +371,27 @@ x86-64では `al`（下位8ビット）への書き込みは上位56ビットが
 
 ---
 
+### println
+
+`codegen.c` 全体で使う出力ヘルパー。`printf` スタイルで書いた後に自動で改行を追加する。出力先は `output_file`（モジュール変数）で、`codegen()` 呼び出し時に設定される。
+
+```c
+void println(char *fmt, ...) {
+  va_list ap;
+  va_start(ap, fmt);
+  vfprintf(output_file, fmt, ap);
+  va_end(ap);
+  fprintf(output_file, "\n");
+}
+```
+
+すべての `printf` 呼び出しをこの関数に置き換えることで、出力先の切り替えを一箇所で管理する。
+
 ### codegen のフロー
 
 ```
-codegen(Obj *prog)
+codegen(Obj *prog, FILE *out)
+  ├─ output_file = out  ← 出力先をモジュール変数にセット
   ├─ .intel_syntax noprefix
   ├─ assign_lvar_offsets() ← 各関数のローカル変数にオフセットを割り当て
   ├─ emit_data()           ← グローバル変数を .data セクションに出力
@@ -475,7 +497,7 @@ char *format(char *fmt, ...) {
 
 ## tokenize.c 解説
 
-ソース文字列を受け取り、`Token` の連結リストに変換する。エントリポイントは `tokenize(char *p)`。
+ファイルを読み込み、`Token` の連結リストに変換する。公開エントリポイントは `tokenize_file(char *path)`。
 
 ### 主な関数
 
@@ -488,7 +510,26 @@ char *format(char *fmt, ...) {
 | `read_escaped_char` | `\n`, `\t` などのエスケープ文字、`\0`, `\101` などの8進数エスケープ、`\x41` などの16進数エスケープを対応するASCII値に変換する |
 | `string_literal_end` | 閉じ `"` の位置を返す（`\"` はスキップ） |
 | `read_string_literal` | `"..."` を読み取りエスケープ処理済みの `TK_STR` トークンを生成する |
-| `tokenize` | ソース文字列を先頭から走査して `Token` リストを構築する |
+| `verror_at` | エラー箇所をファイル名・行番号付きで `ファイル名:行番号: ソース行 ^ メッセージ` の形式で表示して終了する |
+| `read_file` | ファイルを読み込んで文字列として返す。パスが `"-"` の場合は標準入力から読む |
+| `tokenize` | ファイル名と入力文字列を受け取り、先頭から走査して `Token` リストを構築する |
+| `tokenize_file` | `read_file` でファイルを読み込んで `tokenize` を呼ぶ公開API |
+
+### エラーメッセージ
+
+`current_filename` と `current_input` の2つのモジュール変数でエラー表示に必要な情報を保持する。`verror_at` は `loc` からその行の先頭を逆走査して行番号を算出し、以下の形式で表示する:
+
+```
+foo.c:3: int x = 1 + ;
+                    ^ expected an expression
+```
+
+### コメントスキップ（`tokenize` 内）
+
+| 種類 | 構文 | 処理 |
+|---|---|---|
+| 行コメント | `// ...` まで行末 | `//` を検出したら `\n` まで `p` を進めて `continue` |
+| ブロックコメント | `/* ... */` | `/*` を検出したら `strstr` で `*/` を探し、見つかれば `p` を `*/` の直後に進める。見つからなければ `error_at` |
 
 ### read_escaped_char
 
@@ -776,4 +817,70 @@ struct Obj {
         →  new_string_literal() で匿名グローバル変数を生成
         →  var->init_data = "abc\0"（4バイト）
         →  emit_data() で .byte 97 / .byte 98 / .byte 99 / .byte 0 を出力
+```
+
+---
+
+### VarScope / Scope 型
+
+**用途**: ブロックスコープを管理するための構造体。`parse.c` 内で使用する。
+
+```c
+// 1つの変数エントリ（スコープ内の変数名 ↔ Obj の対応）
+struct VarScope {
+  VarScope *next;
+  char *name;
+  Obj *var;
+};
+
+// ブロックスコープ（ネストした { } に対応）
+struct Scope {
+  Scope *next;    // 外側のスコープへのポインタ
+  VarScope *vars; // このスコープ内の変数リスト
+};
+```
+
+`scope` はモジュール変数で、現在の最内スコープを指す。`enter_scope()` でスタックに積み、`leave_scope()` で1段抜ける。
+
+```
+scope →  Scope(inner) → Scope(outer) → Scope(global) → NULL
+              └vars       └vars            └vars
+```
+
+`find_var()` は内側から外側に向かってこのチェーンを線形探索する。最初に一致した変数（最内スコープの変数）を返すことでシャドウイングを実現する。
+
+---
+
+## main.c 解説
+
+コンパイラのエントリポイント。コマンドライン引数の解析、ファイルのトークナイズ・パース・コード生成を行う。
+
+### CLI オプション
+
+```
+9cc [ -o <path> ] <file>
+```
+
+| オプション | 説明 |
+|---|---|
+| `-o <path>` / `-o<path>` | アセンブリの出力先ファイルを指定する。省略時は標準出力へ出力 |
+| `--help` | 使い方を標準エラーに表示して終了（exit code 0）|
+
+### 主な関数
+
+| 関数 | 役割 |
+|---|---|
+| `parse_args` | `argc`/`argv` を走査して `opt_o`（出力先パス）と `input_path`（入力ファイル）をセットする |
+| `open_file` | `opt_o` が `NULL` または `"-"` のときは `stdout` を返す。それ以外は `fopen` でファイルを開く |
+| `usage` | 使い方を表示して `exit(status)` する |
+
+### 処理フロー
+
+```
+main()
+  ├─ parse_args()          ← オプション解析
+  ├─ tokenize_file(input_path)  ← ファイル読み込み & トークナイズ
+  ├─ parse(token)          ← AST 構築
+  ├─ open_file(opt_o)      ← 出力先 FILE* を取得
+  └─ codegen(prog, out)    ← アセンブリ生成 → out へ出力
 ```
