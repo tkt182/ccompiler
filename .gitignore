@@ -11,8 +11,7 @@
 *.elf
 
 # Linker output
-*.ilk
-*.map
+*.ilk *.map
 *.exp
 
 # Precompiled Headers
@@ -54,5 +53,7 @@ Module.symvers
 Mkfile.old
 dkms.conf
 
+**/*.s
 9cc/tmp*
 9cc/9cc
+9cc/test/*.exe
