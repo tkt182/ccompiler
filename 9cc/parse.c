@@ -29,6 +29,8 @@ Node *mul(Token **rest, Token *token);
 Node *postfix(Token **rest, Token *token);
 Node *unary(Token **rest, Token *token);
 Node *primary(Token **rest, Token *token);
+Token *consume_ident(Token **rest, Token *token);
+Obj *find_var(Token *token);
 
 Obj *locals; // ローカル変数リストの先頭
 Obj *globals; // グローバル変数・関数リストの先頭
@@ -177,6 +179,132 @@ Obj *new_string_literal(char *p, Type *ty) {
   return var;
 }
 
+void gvar_init_scalar(Token **rest, Token *token, Type *ty, char *buf) {
+  int val = expect_number(rest, token);
+  memcpy(buf, &val, ty->size);
+}
+
+void gvar_init_array(Token **rest, Token *token, Type *ty, char *buf) {
+  // tyは配列型なので、ty->baseは配列の要素の型
+  Type *elem_ty = ty->base;
+  int elem_size = elem_ty->size;
+  int array_len = ty->array_len;
+
+  if (token->kind == TK_STR) {
+    // 文字列リテラルの場合は、文字列の内容を配列にコピーする
+    int len = token->ty->array_len - 1; // 末尾のヌル文字を除く
+    if (len > array_len) {
+      error_tok(token, "initializer is too long");
+    }
+    memcpy(buf, token->str, len);
+    token = token->next;
+    *rest = token;
+    return;
+  }
+
+  if (equal(token, "{")) {
+    token = token->next;
+    int i = 0;
+    while (!equal(token, "}") && (i < array_len)) {
+      if (i > 0) token = skip(token, ",");
+
+      int val = expect_number(&token, token);
+      memcpy(buf + i * elem_size, &val, elem_size);
+      i++;
+    }
+    token = skip(token, "}");
+    *rest = token;
+    // 残りの容赦は0埋めされるため、ここで処理は終わり
+  } else {
+    // { } がない場合はエラー
+    error_tok(token, "expected \"{\" for array initializer");
+  }
+}
+
+void gvar_initializer(Token **rest, Token *token, Obj *var) {
+  if (var->ty->kind == TY_PTR) {
+    if (token->kind == TK_STR) {
+      Obj *str = new_string_literal(token->str, token->ty);
+      var->init_data = calloc(1, var->ty->size);
+      var->reloc_label = str->name;
+      var->reloc_addend = 0;
+      *rest = token->next;
+      return;
+    }
+
+    Obj *ref = NULL;
+    Token *next = NULL;
+    long addend = 0;
+
+    if (equal(token, "&")) {
+      Token *tok = consume_ident(&next, token->next);
+      if (!tok) {
+        error_tok(token, "expected a variable name");
+      }
+
+      ref = find_var(tok);
+      if (!ref) {
+        error_tok(tok, "undefined variable");
+      }
+      if (ref->is_local) {
+        error_tok(tok, "invalid initializer");
+      }
+    } else if (token->kind == TK_IDENT) {
+      ref = find_var(token);
+      if (!ref) {
+        error_tok(token, "undefined variable");
+      }
+      if (ref->is_local) {
+        error_tok(token, "invalid initializer");
+      }
+      if (ref->ty->kind != TY_ARRAY && ref->ty->kind != TY_PTR) {
+        error_tok(token, "invalid initializer");
+      }
+
+      int base_size = ref->ty->base->size;
+      next = token->next;
+      if (equal(next, "+") || equal(next, "-")) {
+        bool is_sub = equal(next, "-");
+        int n = expect_number(&next, next->next);
+        addend = (long)n * base_size;
+        if (is_sub) {
+          addend = -addend;
+        }
+      }
+    }
+
+    if (ref) {
+      var->init_data = calloc(1, var->ty->size);
+      var->reloc_label = ref->name;
+      var->reloc_addend = addend;
+      *rest = next;
+      return;
+    }
+  }
+
+  if (
+    var->ty->kind == TY_ARRAY &&
+    var->ty->array_len == 0 &&
+    token->kind == TK_STR
+  ) {
+    if (var->ty->base->kind != TY_CHAR) {
+      error_tok(token, "array initializer must be a brace-enclosed list");
+    }
+    var->ty->array_len = token->ty->array_len;
+    var->ty->size = var->ty->base->size * var->ty->array_len;
+  }
+
+  var->init_data = calloc(1, var->ty->size);
+
+  if (var->ty->kind == TY_ARRAY) {
+    // 配列初期化処理
+    gvar_init_array(rest, token, var->ty, var->init_data);
+  } else {
+    // 単一のスカラー変数の初期化処理
+    gvar_init_scalar(rest, token, var->ty, var->init_data);
+  }
+}
+
 Token *consume_ident(Token **rest, Token *token) {
   if (token->kind != TK_IDENT) {
     return NULL;
@@ -257,8 +385,16 @@ Type *type_suffix(Token **rest, Token *token, Type *ty) {
   }
   if (equal(token, "[")) {
     // 配列の処理
-    int len = get_number(token->next);
-    token = skip(token->next->next, "]");
+    int len;
+    if (equal(token->next, "]")) {
+      // 不完全配列。例: char s[] = "abc";
+      len = 0;
+      token = skip(token->next, "]");
+    } else {
+      len = get_number(token->next);
+      token = skip(token->next->next, "]");
+    }
+
     ty = type_suffix(rest, token, ty);
     return array_of(ty, len);
   }
@@ -290,14 +426,16 @@ Node *declaration(Token **rest, Token *token) {
   int i = 0;
 
   while (!equal(token, ";")) {
-    if (i++ > 0)
+    if (i++ > 0) {
       token = skip(token, ",");
+    }
 
     Type *ty = declarator(&token, token, basety);
     Obj *var = new_lvar(get_ident(ty->name), ty);
 
-    if (!equal(token, "="))
+    if (!equal(token, "=")) {
       continue;
+    }
 
     Node *lhs = new_var_node(var, ty->name);
     Node *rhs = assign(&token, token->next);
@@ -721,7 +859,11 @@ Token *global_variable(Token *token, Type *basety) {
     first = false;
 
     Type *ty = declarator(&token, token, basety);
-    new_gvar(get_ident(ty->name), ty);
+    Obj *var = new_gvar(get_ident(ty->name), ty);
+    if (equal(token, "=")) {
+      token = skip(token, "=");
+      gvar_initializer(&token, token, var);
+    }
   }
   return token;
 }

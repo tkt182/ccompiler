@@ -68,6 +68,8 @@ struct Obj {
 
   // グローバル変数
   char *init_data;
+  char *reloc_label;
+  long reloc_addend;
 
   // 関数用
   Obj *params;

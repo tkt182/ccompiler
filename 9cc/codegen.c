@@ -252,8 +252,22 @@ void emit_data(Obj *prog) {
     println("  .globl %s\n", var->name);
     println("%s:\n", var->name);
     if (var->init_data) {
-      for (int i = 0; i < var->ty->size; i++) {
-        println("  .byte %d\n", var->init_data[i]);
+      if (var->reloc_label) {
+        // 先頭8バイトは参照先アドレス
+        if (var->reloc_addend == 0) {
+          println("  .quad %s\n", var->reloc_label);
+        } else if (var->reloc_addend > 0) {
+          println("  .quad %s+%ld\n", var->reloc_label, var->reloc_addend);
+        } else {
+          println("  .quad %s%ld\n", var->reloc_label, var->reloc_addend);
+        }
+        for (int i = 8; i < var->ty->size; i++) {
+          println("  .byte %d\n", var->init_data[i]);
+        }
+      } else {
+        for (int i = 0; i < var->ty->size; i++) {
+          println("  .byte %d\n", var->init_data[i]);
+        }
       }
     } else {
       println("  .zero %d\n", var->ty->size);
