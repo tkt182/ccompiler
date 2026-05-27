@@ -264,7 +264,29 @@ parse()
 - 処理済みの `Token *` を返す（呼び出し元がトークン位置を進めるため）
 
 #### global_variable()
-`int x, y;` のようなグローバル変数宣言を処理する。`,` 区切りで複数変数を `new_gvar` で `globals` に追加する。
+`int x, y;` のようなグローバル変数宣言を処理する。`,` 区切りで複数変数を `new_gvar` で `globals` に追加する。  
+初期化子 `=` がある場合は `gvar_initializer` を呼んで `Obj.init_data` を構築する。
+
+グローバル初期化子の実装ポイント:
+- `gvar_init_scalar`: 数値を1要素分のバイト列として `buf` に書き込む
+- `gvar_init_array`: `{...}` または文字列リテラルで配列を初期化する
+- `gvar_initializer`: 型ごとに分岐して初期化データを作る
+
+`gvar_initializer` の主な分岐:
+- `TY_PTR` + `TK_STR`:
+  文字列リテラルを匿名グローバルに置き、`reloc_label` にそのラベル名を保存する
+- `TY_PTR` + `"&" ident`:
+  グローバル変数のアドレスを初期化子として受理し、`reloc_label` を参照先シンボル名に設定する
+- `TY_PTR` + `ident ("+" num | "-" num)?`:
+  `char *c = msg1 + 1` のような初期化を受理し、`reloc_label` と `reloc_addend`（バイト単位）を設定する
+- `TY_ARRAY` + `array_len==0` + `TK_STR`:
+  `char s[] = "abc"` のような不完全配列を、文字列長（終端 `\0` を含む）で確定する
+- それ以外:
+  `calloc` で `init_data` を確保し、スカラー/配列の初期化子をバイト列に変換する
+
+補足:
+- `type_suffix` は `[]`（要素数省略）を受理し、要素数 `0` の不完全配列として型を作る
+- その後 `gvar_initializer` が実初期化子を見てサイズを確定する
 
 #### is_function()
 `declarator` を試し呼びして型が `TY_FUNC` かどうかで関数/変数を判定する。
@@ -409,7 +431,8 @@ codegen(Obj *prog, FILE *out)
 
 | 条件 | 出力 | 用途 |
 |---|---|---|
-| `init_data` あり | `.byte <値>` を `size` 回繰り返す | 文字列リテラル |
+| `init_data` あり（`reloc_label` なし） | `.byte <値>` を `size` 回繰り返す | 数値/配列/文字列の固定初期化 |
+| `init_data` あり（`reloc_label` あり） | 先頭を `.quad <label>` または `.quad <label>+<addend>` / `.quad <label><addend>` で出力し、残りは `.byte` | `char *p = "foo"`, `int *g6 = &g3`, `char *c = msg1 + 1` のようなアドレス再配置が必要な初期化 |
 | `init_data` なし | `.zero <size>` | 通常のグローバル変数（ゼロ初期化） |
 
 文字列リテラル `"abc"` の場合、`init_data` は `{'a','b','c','\0'}` なので:
@@ -790,7 +813,9 @@ struct Obj {
   bool is_function; // true = 関数、false = 変数
 
   // グローバル変数用
-  char *init_data;  // 初期値データへのポインタ（文字列リテラルで使用、なければ NULL）
+  char *init_data;    // 初期値データへのポインタ（なければ NULL）
+  char *reloc_label;  // ポインタ初期化時の再配置先ラベル（例: .L..0）
+  long reloc_addend;  // 再配置時の加算オフセット（バイト単位）
 
   // 関数用
   Obj *params;      // 引数リスト（Obj の連結リスト）
@@ -807,16 +832,26 @@ struct Obj {
 |---|---|
 | `is_local` | ローカル変数なら `true`。`gen_addr` がアドレス計算方法を切り替えるために使う |
 | `is_function` | 関数なら `true`。`emit_data` / `emit_text` の振り分けに使う |
-| `init_data` | グローバル変数の初期値バイト列。文字列リテラル用の匿名グローバル変数では `token->str` が入る。`NULL` なら `.zero` で出力 |
+| `init_data` | グローバル変数の初期値データ。`NULL` なら `.zero` で出力 |
+| `reloc_label` | `char *p = "foo"` のような初期化で、`.quad <label>` を出力するための参照先ラベル |
+| `reloc_addend` | `char *c = msg1 + 1` のような初期化で、`.quad <label>+<addend>` を出力するためのオフセット |
 | `offset` | ローカル変数の `rbp` からのオフセット。`gen_addr` で `lea rax, [rbp - offset]` として使う |
 
-#### 文字列リテラルと init_data の関係
+#### 文字列リテラルと init_data / reloc_label の関係
 
 ```
 "abc"  →  TK_STR トークン（str="abc", ty=array_of(ty_char, 4)）
-        →  new_string_literal() で匿名グローバル変数を生成
-        →  var->init_data = "abc\0"（4バイト）
-        →  emit_data() で .byte 97 / .byte 98 / .byte 99 / .byte 0 を出力
+  →  new_string_literal() で匿名グローバル変数を生成
+  →  文字列実体の Obj: init_data="abc\0", reloc_label=NULL
+  →  emit_data() で .byte 97 / .byte 98 / .byte 99 / .byte 0 を出力
+
+char *p = "abc";
+  →  p の Obj: init_data を持ち、reloc_label に文字列ラベル名を保存
+  →  emit_data() で先頭を .quad <label> として出力
+
+char *c = msg1 + 1;
+  →  c の Obj: reloc_label="msg1", reloc_addend=1（char の1要素分）
+  →  emit_data() で .quad msg1+1 を出力
 ```
 
 ---
